@@ -218,15 +218,14 @@ def generate_ai_tweet(mode: str, image_context: Optional[str] = None) -> str:
 一言ツイートを作ってください。
 """
     else:
-        base_instruction = """
+    base_instruction = """
 あなたは日本の女子大学生バンド「パンダうさギーズ」のSNS担当です。
-メンバーの誰かが、自分のアカウントからつぶやいているような一言ツイートを作ってください。
+...
 """
 
-       common_rule = """
+common_rule = """
 【絶対に守るルール】
-
-- 女子大学生が自然と使いそうな軽い日本語で書く。
+- 女子大生が自然と使いそうな軽い日本語で書く。
 - “死語”っぽいフレーズ（モグモグタイム / ○○なう / バブみ など）は使わない。
 - SNSで今の大学生が使う自然な口調にする（「いい感じ」「エモい」「すき」「かわいすぎ」など）
 - 長文にしない。1〜2文。
@@ -234,6 +233,7 @@ def generate_ai_tweet(mode: str, image_context: Optional[str] = None) -> str:
 - 説教・強い断定は禁止。
 - 日常の軽い一言ツイートをメインにする。
 """
+
 
 
 
