@@ -42,6 +42,17 @@ TIME_WINDOWS = [
     (22, 24),  # 22:00〜23:59
 ]
 
+# ==========================
+# 自動エンゲージメント設定
+# ==========================
+ENABLE_LIKE_BACK = True          # いいね返し
+ENABLE_DISCOVERY_LIKES = True    # 関連ユーザーへのいいね撒き
+ENABLE_SMART_REPLIES = True      # 自然リプ（ごく少なめ）
+
+LIKE_BACK_LIMIT_PER_RUN = 10         # 1回の実行で返す「いいね」の最大数
+DISCOVERY_LIKE_LIMIT_PER_RUN = 10    # 関連ツイートへ押す「いいね」の最大数
+REPLY_LIMIT_PER_RUN = 2              # 1回の実行で送るリプの最大数
+
 # 画像保存先（すでにある BOTimg フォルダを利用）
 BASE_DIR = Path(__file__).resolve().parent
 IMG_DIR = BASE_DIR / "BOTimg"
@@ -70,6 +81,12 @@ def create_api_v1() -> tweepy.API:
         API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET
     )
     return tweepy.API(auth)
+
+
+def get_my_user_id(client: tweepy.Client) -> str:
+    """自分のユーザーIDを取得"""
+    me = client.get_me()
+    return str(me.data.id)
 
 
 # ==========================
@@ -201,7 +218,6 @@ def describe_image_for_tweet(image_path: str) -> Optional[str]:
 # ================================
 # AIでツイート文を生成（画像コンテキスト対応）
 # ================================
-# AIでツイート文を生成（画像コンテキスト対応）
 def generate_ai_tweet(mode: str, image_context: Optional[str] = None) -> str:
     """
     mode:
@@ -256,6 +272,8 @@ def generate_ai_tweet(mode: str, image_context: Optional[str] = None) -> str:
 - 画像があるときは、まず「画像に写っていそうな雰囲気や気持ち」を
   1番大事にして、それに合う一言を考える。
 - 音楽の話や日常の一言ツイートをメインにする。
+- たまにで良いので、「フォローしてくれたらうれしい」など、
+  軽くフォローをお願いする一文を入れてもよい。ただし毎回は書かない。
 """
 
     # -----------------------------
@@ -297,7 +315,6 @@ def generate_ai_tweet(mode: str, image_context: Optional[str] = None) -> str:
         text = text[:270]
 
     return text
-
 
 
 def add_signature(text: str) -> str:
@@ -400,9 +417,209 @@ def choose_today_target_time(now: datetime) -> datetime:
 
 
 # ==========================
+# いいね返し機能
+# ==========================
+def like_back_recent_likers() -> None:
+    """自分のツイートにいいねしてくれた人の最新ツイートに、いいね返しをする。"""
+    if not ENABLE_LIKE_BACK:
+        return
+
+    client = create_client_v2()
+    my_id = get_my_user_id(client)
+    liked_count = 0
+
+    try:
+        tweets_resp = client.get_users_tweets(
+            id=my_id,
+            max_results=5,
+            tweet_fields=["id"],
+        )
+    except Exception as e:
+        print("いいね返し: 自分のツイート取得でエラー:", e)
+        return
+
+    if not tweets_resp.data:
+        return
+
+    for my_tweet in tweets_resp.data:
+        try:
+            likers_resp = client.get_liking_users(
+                id=my_tweet.id,
+                max_results=20,
+            )
+        except Exception as e:
+            print("いいね返し: liker取得でエラー:", e)
+            continue
+
+        if not likers_resp.data:
+            continue
+
+        for user in likers_resp.data:
+            if liked_count >= LIKE_BACK_LIMIT_PER_RUN:
+                return
+
+            try:
+                user_tweets = client.get_users_tweets(
+                    id=user.id,
+                    max_results=5,
+                    exclude=["retweets", "replies"],
+                    tweet_fields=["id"],
+                )
+            except Exception as e:
+                print("いいね返し: 相手ツイート取得でエラー:", e)
+                continue
+
+            if not user_tweets.data:
+                continue
+
+            target_tweet_id = user_tweets.data[0].id
+
+            try:
+                client.like(target_tweet_id)
+                liked_count += 1
+                print(f"いいね返し: user={user.id} tweet={target_tweet_id}")
+            except Exception as e:
+                print("いいね返し: likeでエラー:", e)
+                continue
+
+
+# ==========================
+# 関連ユーザーへの「いいね撒き」
+# ==========================
+def like_discovery_tweets() -> None:
+    """関連ワードでツイート検索して、自然な範囲でいいねを押す。"""
+    if not ENABLE_DISCOVERY_LIKES:
+        return
+
+    client = create_client_v2()
+    query = (
+        "バンド 女子 OR ガールズバンド OR 学生バンド OR ライブハウス "
+        "-is:retweet lang:ja"
+    )
+
+    try:
+        search_resp = client.search_recent_tweets(
+            query=query,
+            max_results=DISCOVERY_LIKE_LIMIT_PER_RUN * 2,
+            tweet_fields=["id", "author_id"],
+        )
+    except Exception as e:
+        print("ディスカバリーいいね: searchでエラー:", e)
+        return
+
+    if not search_resp.data:
+        return
+
+    liked = 0
+    for tweet in search_resp.data:
+        if liked >= DISCOVERY_LIKE_LIMIT_PER_RUN:
+            break
+
+        try:
+            client.like(tweet.id)
+            liked += 1
+            print(f"ディスカバリーいいね: tweet={tweet.id}")
+        except Exception as e:
+            print("ディスカバリーいいね: likeでエラー:", e)
+            continue
+
+
+# ==========================
+# 自然な短文リプライ生成
+# ==========================
+def generate_short_reply(original_text: str) -> str:
+    """
+    相手のツイートに対する、50文字以内の短いリプを作る。
+    失礼にならず、宣伝もしない。軽い感想だけ。
+    """
+    system_prompt = """
+あなたはバンド「パンダうさギーズ」のSNS担当です。
+相手のツイートに、感じの良い一言だけ日本語で返信してください。
+
+【絶対守るルール】
+- 50文字以内。
+- 1文だけ。顔文字は1つまで。
+- 相手をほめたり、共感したりする内容にする。
+- 自分の宣伝（フォローしてね、配信中です 等）は書かない。
+- 上から目線や説教っぽい言い方はしない。
+"""
+
+    user_prompt = f"元のツイート:「{original_text}」\n\nこれに対する短い返信文を1つだけ書いてください。"
+
+    resp = oa_client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        max_tokens=80,
+        temperature=0.8,
+    )
+
+    text = resp.choices[0].message.content.strip()
+    if len(text) > 60:
+        text = text[:60]
+    return text
+
+
+# ==========================
+# 自然リプ（控えめ）
+# ==========================
+def smart_replies() -> None:
+    """関連ツイートの一部にだけ、短い自然リプを送る。"""
+    if not ENABLE_SMART_REPLIES:
+        return
+
+    client = create_client_v2()
+    query = (
+        "バンド 女子 OR ガールズバンド OR 学生バンド "
+        "-is:retweet lang:ja"
+    )
+
+    try:
+        search_resp = client.search_recent_tweets(
+            query=query,
+            max_results=20,
+            tweet_fields=["id", "text", "author_id"],
+        )
+    except Exception as e:
+        print("スマートリプ: searchでエラー:", e)
+        return
+
+    if not search_resp.data:
+        return
+
+    replied = 0
+    for tweet in search_resp.data:
+        if replied >= REPLY_LIMIT_PER_RUN:
+            break
+
+        original_text = tweet.text
+
+        # URLだけのツイートなどは避ける
+        if "http://" in original_text or "https://" in original_text:
+            continue
+
+        try:
+            reply_text = generate_short_reply(original_text)
+            if not reply_text:
+                continue
+
+            client.create_tweet(
+                text=reply_text,
+                reply={"in_reply_to_tweet_id": tweet.id},
+            )
+            replied += 1
+            print(f"スマートリプ: reply to tweet={tweet.id}")
+        except Exception as e:
+            print("スマートリプ: リプ送信でエラー:", e)
+            continue
+
+
+# ==========================
 # メイン処理
 # ==========================
-def run_once():
+def run_once() -> None:
     now = datetime.now(ZoneInfo(TIMEZONE))
     weekday = now.weekday()  # 月曜=0, 金曜=4
     mode = "band" if weekday == 4 else "daily"
@@ -443,4 +660,10 @@ if __name__ == "__main__":
         if delay > 0:
             time.sleep(delay)
 
+    # ① 通常ツイート
     run_once()
+
+    # ② エンゲージメント系（控えめ）
+    like_back_recent_likers()
+    like_discovery_tweets()
+    smart_replies()
