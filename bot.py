@@ -109,7 +109,8 @@ def post_text(text: str, image_path: Optional[str] = None) -> Optional[str]:
         response = client.create_tweet(text=text, media_ids=media_ids)
         tweet_id = response.data["id"]
         print("投稿成功:", text)
-        print("URL: https://x.com/i/web/status/" + tweet_id)
+        # ★ 修正: tweet_id は int なので f文字列でキャスト
+        print(f"URL: https://x.com/i/web/status/{tweet_id}")
         return tweet_id
     except Exception as e:
         print("テキスト投稿でエラー:", e)
@@ -180,7 +181,8 @@ def generate_ai_tweet(
 
     system_prompt = base_instruction + common_rule + theme_part + img_part
 
-    response = oa_client.chat_completions.create(
+    # ★ 修正: chat_completions ではなく chat.completions
+    response = oa_client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
             {"role": "system", "content": system_prompt},
@@ -213,7 +215,8 @@ def describe_image_for_tweet(image_path: str) -> Optional[str]:
             image_bytes = f.read()
         image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-        resp = oa_client.chat_completions.create(
+        # ★ 修正: こちらも chat_completions → chat.completions
+        resp = oa_client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
                 {"role": "system", "content": "画像の雰囲気を簡潔に説明するアシスタントです。"},
