@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ==========================
-# API キー（環境変数から読む）
+# API キー
 # ==========================
 API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
@@ -30,48 +30,42 @@ print("DEBUG API_KEY is None? ->", API_KEY is None)
 # ==========================
 TIMEZONE = "Asia/Tokyo"
 
-# 画像を付ける確率
-IMAGE_PROBABILITY = 0.40
+IMAGE_PROBABILITY = 0.40  # 40%
 
-# ⭐ 配信リンクと宣伝文
 USE_RELEASE_LINK = True
 RELEASE_LINK_URL = "https://big-up.style/uviwifz2tO"
 PROMO_SUFFIX = "そして配信中！ ダウンロードしてね！"
 
-# 曜日ごとの投稿時間ウィンドウ
-# 0=月曜, 1=火曜, ... 6=日曜
-# (start_hour, end_hour) は「start〜end-1時台」のどこか
+# 曜日ごとの投稿時間帯
 TIME_WINDOWS_BY_WEEKDAY = {
-    0: [(19, 22)],              # 月: 19〜21時台
-    1: [(19, 22)],              # 火
-    2: [(19, 22)],              # 水
-    3: [(19, 22)],              # 木
-    4: [(18, 21)],              # 金: 少し早め
-    5: [(13, 16), (20, 23)],    # 土: 昼 or 夜
-    6: [(13, 16), (20, 23)],    # 日: 昼 or 夜
+    0: [(19, 22)],
+    1: [(19, 22)],
+    2: [(19, 22)],
+    3: [(19, 22)],
+    4: [(18, 21)],
+    5: [(13, 16), (20, 23)],
+    6: [(13, 16), (20, 23)],
 }
 
-# 曜日ごとの「話題テーマ」説明
+# 曜日テーマ
 THEME_TEXT_BY_WEEKDAY = {
-    0: "月曜日。学校や授業、通学のこと、月曜日ならではの気分について。歌詞やことば、詩がふっと浮かんだ話は月曜日だけOK。",
-    1: "火曜日。バイトや放課後、友だちとの帰り道、日常のちょっとした出来事について。",
-    2: "水曜日。曲作りやフレーズ、コード進行、アレンジ、練習の工夫など、音楽づくりそのものについて。曲作りの話をしていいのは水曜日だけ。",
-    3: "木曜日。楽器や機材、音作りのこだわり、小さな発見について。",
-    4: "金曜日。バンド活動全体のこと、リハーサルや本番前後の気持ちなど。『スタジオ』という単語を使ってよいのは金曜日だけで、文章中に1回まで。",
-    5: "土曜日。街に出かけたこと、イベント、買い物、友だちとの時間など外の世界の雰囲気について。",
-    6: "日曜日。一週間を振り返る気持ち、のんびりした時間、明日からまたがんばろうと思えるような穏やかな話題について。",
+    0: "月曜日。学校や授業、通学の気分など。詩が浮かぶのは月曜だけOK。",
+    1: "火曜日。バイト、放課後、友だちとの帰り道など。",
+    2: "水曜日。曲作り・アレンジ・フレーズの話をしていい日。",
+    3: "木曜日。楽器・機材・音作りなどの話題。",
+    4: "金曜日。バンド活動全体の話。『スタジオ』という単語を使えるのは金曜だけ（1回のみ）。",
+    5: "土曜日。出かけた話、街の雰囲気、イベントなど。",
+    6: "日曜日。一週間の振り返りやゆっくりした話題。",
 }
 
-# 画像フォルダ
 BASE_DIR = Path(__file__).resolve().parent
 IMG_DIR = BASE_DIR / "BOTimg"
 IMG_DIR.mkdir(exist_ok=True)
 
-# OpenAI クライアント
 oa_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else OpenAI()
 
 # ==========================
-# X クライアント
+# X API
 # ==========================
 def create_client_v2() -> tweepy.Client:
     return tweepy.Client(
@@ -83,11 +77,8 @@ def create_client_v2() -> tweepy.Client:
 
 
 def create_api_v1() -> tweepy.API:
-    auth = tweepy.OAuth1UserHandler(
-        API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET
-    )
+    auth = tweepy.OAuth1UserHandler(API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET)
     return tweepy.API(auth)
-
 
 # ==========================
 # 投稿
@@ -109,7 +100,6 @@ def post_text(text: str, image_path: Optional[str] = None) -> Optional[str]:
         response = client.create_tweet(text=text, media_ids=media_ids)
         tweet_id = response.data["id"]
         print("投稿成功:", text)
-        # ★ 修正: tweet_id は int なので f文字列でキャスト
         print(f"URL: https://x.com/i/web/status/{tweet_id}")
         return tweet_id
     except Exception as e:
@@ -118,219 +108,215 @@ def post_text(text: str, image_path: Optional[str] = None) -> Optional[str]:
 
 
 # ==========================
-# AI 文章生成（ポキヌ人格＋曜日ルール）
+# 生理ポスト（月1）
 # ==========================
-def generate_ai_tweet(
-    weekday: int,
-    image_context: Optional[str] = None,
-) -> str:
+PERIOD_STATE_FILE = BASE_DIR / "period_state.json"
+
+def load_period_state():
+    if not PERIOD_STATE_FILE.exists():
+        return {"last_post": None}
+    try:
+        import json
+        with open(PERIOD_STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {"last_post": None}
+
+def save_period_state(date_str: str):
+    import json
+    with open(PERIOD_STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump({"last_post": date_str}, f)
+
+def needs_period_post(now: datetime) -> bool:
+    state = load_period_state()
+    last = state.get("last_post")
+    if last is None:
+        return True
+    last_date = datetime.fromisoformat(last)
+    return not (last_date.year == now.year and last_date.month == now.month)
+
+def generate_period_post() -> str:
+    texts = [
+        "生理きてお腹の中で誰か暴れてるみたい。今日は静かにいく日。",
+        "朝からお腹が重い。毎回慣れないけど、ゆっくりしたい日だな。",
+        "生理でお腹ぐーっと痛くて、授業中ほぼ前かがみだった。ホットカイロ偉すぎ。",
+    ]
+    return random.choice(texts)
+
+# ==========================
+# ポキヌ（二日に一回）
+# ==========================
+POKINU_STATE_FILE = BASE_DIR / "pokinu_state.json"
+
+def load_pokinu_state():
+    if not POKINU_STATE_FILE.exists():
+        return {"last_post": None}
+    try:
+        import json
+        with open(POKINU_STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {"last_post": None}
+
+def save_pokinu_state(date_str: str):
+    import json
+    with open(POKINU_STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump({"last_post": date_str}, f)
+
+def needs_pokinu_post(now: datetime) -> bool:
+    state = load_pokinu_state()
+    last = state.get("last_post")
+    if last is None:
+        return True
+    last_date = datetime.fromisoformat(last)
+    return (now - last_date).total_seconds() >= 48 * 3600
+
+
+# ==========================
+# スタッフ（毎日）
+# ==========================
+def generate_staff_post() -> str:
+    return (
+        "ミニアルバムは現在各ストアで配信中です。\n"
+        "短い期間で仕上げた作品ですが、メンバーのこだわりが詰まっています。\n"
+        "よろしければチェックしてみてください。\n"
+        f"{RELEASE_LINK_URL}\n"
+        "【スタッフ】"
+    )
+
+
+# ==========================
+# AI 文章生成（ポキヌ）
+# ==========================
+def generate_ai_tweet(weekday: int, image_context: Optional[str] = None) -> str:
+
     base_instruction = """
-あなたは日本の大学生バンド「パンダうさギーズ」のボーカル「ポキヌ」です。
-あなた自身のアカウントでXに投稿するつぶやきを書きます。
-署名は付けません（文末に名前は書かない）。
+あなたは大学生バンド「パンダうさギーズ」のボーカル「ポキヌ」です。
+あなた自身のアカウントで自然な日常のつぶやきを書きます。
+署名は付けません。
 """
 
     common_rule = """
-【出力形式】
-- 1〜5行のテキストにする。
-- 各行は短くてよい。行と行の間は改行で区切る。
-- 行頭に「・」や「#」などの記号は付けない。
-- ハッシュタグは禁止。
-- 絵文字は使っても0〜2個まで。
+【形式】
+- 1〜5行で書く。
+- 絵文字は0〜2個まで。
+- テンプレSNS語は禁止（エモい/尊い/おつかれ〜等）。
 
-【ポキヌの文体ルール（人格モデル）】
-- 文は短めでよいが、あまり意味不明にはしない。
-  → 日常の出来事や状況が一言わかる程度には具体的にする。
-- 断片的な表現は残すが、“ズレた詩”は1〜2か所にとどめる。
-- 感情は直接書き過ぎず、「物」「動作」「小さな違和感」で伝える。
-- 普通の日常のひと言（今日は寒かった／授業が長かった等）を混ぜていい。
-  → ただしテンプレSNS語（エモい、尊い、おつかれ〜など）は禁止。
-- 少し毒のある比喩はOKだが、意味がつながるように。
-- 命令形（飛ばせ／来い／壊せなど）は使ってもよいが、全体の1回まで。
-- 文章に最低1つは “今日あったこと” がわかる具体要素を入れる。
-  例：電車／コンビニ／自転車／雨／昼飯／授業／帰り道／駅前 など。
-- 比喩は短く奇妙でもよいが「唐突すぎる不可解さ」は避ける。
+【ポキヌの文体】
+- 日常の中の小さな出来事を具体的に入れる。
+- 少しズレた視点や比喩はOKだが意味不明はNG。
+- 夕焼け/空/天気の話は禁止。
+- 唐突に詩にならない。
 
-
-【話題の禁止・制限ルール】
-- 曲作り（新しいフレーズが浮かんだ、コード進行を考えた、アレンジを思いついた など）の話題は、水曜日だけに書いてよい。
-  → 水曜日以外は、曲作りの話題は絶対に書かない。
-- 歌詞・ことば・詩が浮かんだ、という話題は、月曜日だけに書いてよい。
-  → 月曜日以外は、「歌詞が浮かんだ」「詩を書いた」などは書かない。
-- 「スタジオ」という単語を使ってよいのは金曜日だけ。
-  → 金曜日以外は、「スタジオ」という単語を一切使わない。
-  → 金曜日でも、文章全体で「スタジオ」という単語は1回まで。必要なときだけにする。
+【話題の制限】
+- 曲作りの話は水曜日だけ。
+- 歌詞・詩が浮かんだ話は月曜日だけ。
+- 「スタジオ」という単語を使えるのは金曜だけ（最大1回）。
 """
 
-    theme_text = THEME_TEXT_BY_WEEKDAY.get(
-        weekday,
-        "特に決まったテーマはないので、パンダうさギーズの日常の中から自然な一言を考えてください。",
-    )
+    theme_text = THEME_TEXT_BY_WEEKDAY.get(weekday, "")
+    theme_part = f"\n【今日のテーマ】\n{theme_text}\n"
 
-    theme_part = f"\n【今日の曜日とテーマ】\n{theme_text}\n"
-
+    img_part = ""
     if image_context:
         img_part = (
-            "\n【画像の雰囲気】\n"
+            "\n【写真の雰囲気】\n"
             f"{image_context}\n"
-            "まずはこの画像の空気や違和感に合う内容を最優先で考えてください。\n"
+            "写真の気配を優先して書いてください。\n"
         )
-    else:
-        img_part = ""
 
     system_prompt = base_instruction + common_rule + theme_part + img_part
 
-    # ★ 修正: chat_completions ではなく chat.completions
-    response = oa_client.chat.completions.create(
+    resp = oa_client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
             {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": "上の条件をすべて守って、今日のツイート文を1つだけ書いてください。",
-            },
+            {"role": "user", "content": "条件を守ってポキヌのつぶやきを1つ書いてください。"},
         ],
         max_tokens=200,
         temperature=0.9,
     )
 
-    text = response.choices[0].message.content.strip()
-
-    # 行数を5行までに制限（余分な空行も整理）
-    lines = [line.rstrip() for line in text.splitlines() if line.strip() != ""]
-    if len(lines) > 5:
-        lines = lines[:5]
-    text = "\n".join(lines)
-
-    return text
+    text = resp.choices[0].message.content.strip()
+    lines = [l for l in text.split("\n") if l.strip()]
+    return "\n".join(lines[:5])
 
 
 # ==========================
-# 画像説明
+# 画像処理
 # ==========================
 def describe_image_for_tweet(image_path: str) -> Optional[str]:
     try:
         with open(image_path, "rb") as f:
-            image_bytes = f.read()
-        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+            image_b = f.read()
+        image_b64 = base64.b64encode(image_b).decode()
 
-        # ★ 修正: こちらも chat_completions → chat.completions
         resp = oa_client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
-                {"role": "system", "content": "画像の雰囲気を簡潔に説明するアシスタントです。"},
+                {"role": "system", "content": "写真の雰囲気を短く説明します。"},
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": "写真の雰囲気を50文字以内で日本語で説明してください。",
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": "data:image/png;base64," + image_b64},
-                        },
+                        {"type": "text", "text": "写真の雰囲気を50文字以内で説明してください。"},
+                        {"type": "image_url", "image_url": {"url": "data:image/png;base64," + image_b64}},
                     ],
                 },
             ],
-            max_tokens=120,
         )
         return resp.choices[0].message.content.strip()
-    except Exception as e:
-        print("画像解析でエラー:", e)
+    except:
         return None
 
 
-# ==========================
-# 画像選択（ジャケ写最優先）
-# ==========================
 def maybe_generate_image(now: datetime) -> Tuple[Optional[str], Optional[str]]:
     if random.random() > IMAGE_PROBABILITY:
         return None, None
 
-    # まずジャケット写真を最優先で使う
     jacket = IMG_DIR / "botimg24.png"
     if jacket.exists():
-        print("ジャケ写を使用:", jacket)
         return str(jacket), "アルバムのジャケット写真"
 
-    # それ以外の画像からランダム
-    manual_images = list(IMG_DIR.glob("*.png"))
-    if not manual_images:
+    imgs = list(IMG_DIR.glob("*.png"))
+    if not imgs:
         return None, None
 
-    chosen = random.choice(manual_images)
-    image_context = describe_image_for_tweet(str(chosen))
-    return str(chosen), image_context
+    chosen = random.choice(imgs)
+    return str(chosen), describe_image_for_tweet(str(chosen))
 
 
 # ==========================
-# 曜日ごとの投稿時刻を決める
+# 時間帯決定
 # ==========================
 def choose_today_target_time(now: datetime) -> datetime:
-    """
-    曜日ごとの TIME_WINDOWS_BY_WEEKDAY から時間帯を選び、
-    その中でランダムな時刻を返す。
-    すでにその時間を過ぎていたら翌日扱い。
-    """
-    weekday = now.weekday()  # 月曜=0 ... 日曜=6
-    windows = TIME_WINDOWS_BY_WEEKDAY.get(weekday)
+    weekday = now.weekday()
+    windows = TIME_WINDOWS_BY_WEEKDAY.get(weekday, [(19, 22)])
+    start, end = random.choice(windows)
 
-    # 万が一設定がなかった場合は 19〜22時をデフォルトにする
-    if not windows:
-        windows = [(19, 22)]
-
-    # その曜日の候補から1つ選ぶ
-    start_hour, end_hour = random.choice(windows)
-
-    hour = random.randint(start_hour, end_hour - 1)
+    hour = random.randint(start, end - 1)
     minute = random.randint(0, 59)
     second = random.randint(0, 59)
 
     target = now.replace(hour=hour, minute=minute, second=second, microsecond=0)
     if target <= now:
         target += timedelta(days=1)
-
     return target
 
 
 # ==========================
-# メイン処理
+# メイン
 # ==========================
 def run_once():
     now = datetime.now(ZoneInfo(TIMEZONE))
-    weekday = now.weekday()  # 月=0, 日=6
+    weekday = now.weekday()
 
-    image_path, image_context = maybe_generate_image(now)
-    base_text = generate_ai_tweet(
-        weekday=weekday,
-        image_context=image_context,
-    )
+    # --------------------------
+    # ① スタッフ投稿（毎日）
+    # --------------------------
+    staff_text = generate_staff_post()
+    print("スタッフ投稿:", staff_text)
+    post_text(staff_text)
 
-    # 宣伝文と配信リンクを後ろに付ける
-    if USE_RELEASE_LINK and RELEASE_LINK_URL:
-        tweet_text = f"{base_text}\n{PROMO_SUFFIX}\n{RELEASE_LINK_URL}"
-    else:
-        tweet_text = base_text
-
-    print("生成されたツイート文:", tweet_text)
-    print("画像:", image_path)
-
-    post_text(tweet_text, image_path=image_path)
-
-
-if __name__ == "__main__":
-    now = datetime.now(ZoneInfo(TIMEZONE))
-
-    # RANDOM_DELAY=true のときだけ「曜日ごとの時間帯」で待機してから投稿
-    use_random_delay = os.getenv("RANDOM_DELAY", "false").lower() == "true"
-
-    if use_random_delay:
-        target = choose_today_target_time(now)
-        delay = (target - now).total_seconds()
-        print(f"今日の投稿予定時刻: {target} (あと {int(delay)} 秒)")
-
-        if delay > 0:
-            time.sleep(delay)
-
-    run_once()
+    # --------------------------
+    # ② ポキヌ投稿（二日に一回）
+    # -
