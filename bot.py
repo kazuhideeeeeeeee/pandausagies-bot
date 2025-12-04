@@ -33,8 +33,7 @@ TIMEZONE = "Asia/Tokyo"
 # 画像を付ける確率
 IMAGE_PROBABILITY = 0.40
 
-# ⭐ 配信リンクと宣伝文
-USE_RELEASE_LINK = True
+# ⭐ 配信リンクと宣伝文（使うのはスタッフ投稿だけ）
 RELEASE_LINK_URL = "https://big-up.style/uviwifz2tO"
 PROMO_SUFFIX = "ダウンロードしてね！してくれたら泣いちゃう！"
 
@@ -176,7 +175,7 @@ def generate_pokinu_tweet(
 【曜日の味付け】
 - 今日は {weekday_label} です。
 - 曜日を直接書かなくてもいいが、
-  その曜日らしい空気感（だるさ／中だるみ／折り返し／金曜の疲れと解放感／週末の空虚さ etc）を少しだけ混ぜてください。
+  その曜日らしい空気感（だるさ／中だるみ／折り返し／金曜の解放感／週末の空虚さなど）を少しだけ混ぜてください。
 """
 
     if image_context:
@@ -334,7 +333,7 @@ def choose_today_target_time(now: datetime) -> datetime:
 
 
 # ==========================
-# メイン処理（1日1ポストに統一）
+# メイン処理（1日1ポスト）
 # ==========================
 def run_once():
     now = datetime.now(ZoneInfo(TIMEZONE))
@@ -351,16 +350,10 @@ def run_once():
     else:
         print("今日は【ポキヌ投稿デー】です")
         image_path, image_context = maybe_generate_image(now)
-        base_text = generate_pokinu_tweet(
+        tweet_text = generate_pokinu_tweet(
             weekday=weekday,
             image_context=image_context,
         )
-
-        if USE_RELEASE_LINK and RELEASE_LINK_URL:
-            tweet_text = f"{base_text}\n{PROMO_SUFFIX}\n{RELEASE_LINK_URL}"
-        else:
-            tweet_text = base_text
-
         print("ポキヌ投稿テキスト:", tweet_text)
         print("画像(ポキヌ):", image_path)
         post_text(tweet_text, image_path=image_path)
@@ -379,6 +372,6 @@ if __name__ == "__main__":
         if delay > 0:
             time.sleep(delay)
 
-    print("ディレイなしで run_once を実行します")
+    print("run_once を実行します")
     run_once()
     print("run_once 終了")
