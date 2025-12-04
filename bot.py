@@ -30,11 +30,18 @@ print("DEBUG API_KEY is None? ->", API_KEY is None)
 # ==========================
 TIMEZONE = "Asia/Tokyo"
 
-# ポキヌ投稿に画像を付ける確率
+# 画像を付ける確率
 IMAGE_PROBABILITY = 0.40
 
-# ⭐ 配信リンク
+# ⭐ 配信リンクと宣伝文
+USE_RELEASE_LINK = True
 RELEASE_LINK_URL = "https://big-up.style/uviwifz2tO"
+PROMO_SUFFIX = "そして配信中！ ダウンロードしてね！"
+
+# 「スタッフ宣伝デー」判定
+# day % 7 == 1 の日だけ【スタッフ】ポスト、それ以外はポキヌ
+def is_staff_day(now: datetime) -> bool:
+    return now.day % 7 == 1
 
 # 曜日ごとの投稿時間ウィンドウ
 # 0=月曜, 1=火曜, ... 6=日曜
@@ -49,7 +56,7 @@ TIME_WINDOWS_BY_WEEKDAY = {
     6: [(13, 16), (20, 23)],    # 日: 昼 or 夜
 }
 
-# 曜日ごとの「話題テーマ」説明（ポキヌ用）
+# 曜日ごとの「話題テーマ」説明
 THEME_TEXT_BY_WEEKDAY = {
     0: "月曜日。学校や授業、通学のこと、月曜日ならではの気分について。歌詞やことば、詩がふっと浮かんだ話は月曜日だけOK。",
     1: "火曜日。バイトや放課後、友だちとの帰り道、日常のちょっとした出来事について。",
@@ -64,9 +71,6 @@ THEME_TEXT_BY_WEEKDAY = {
 BASE_DIR = Path(__file__).resolve().parent
 IMG_DIR = BASE_DIR / "BOTimg"
 IMG_DIR.mkdir(exist_ok=True)
-
-# ジャケット画像
-JACKET_PATH = IMG_DIR / "botimg24.png"
 
 # OpenAI クライアント
 oa_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else OpenAI()
@@ -118,7 +122,7 @@ def post_text(text: str, image_path: Optional[str] = None) -> Optional[str]:
 
 
 # ==========================
-# AI 文章生成（ポキヌ人格＋曜日ルール）
+# ポキヌ用 AI 文章生成
 # ==========================
 def generate_pokinu_tweet(
     weekday: int,
@@ -128,7 +132,6 @@ def generate_pokinu_tweet(
 あなたは日本の大学生バンド「パンダうさギーズ」のボーカル「ポキヌ」です。
 あなた自身のアカウントでXに投稿するつぶやきを書きます。
 署名は付けません（文末に名前は書かない）。
-配信リンクやURLは絶対に書かないでください。
 """
 
     common_rule = """
@@ -140,17 +143,17 @@ def generate_pokinu_tweet(
 - 絵文字は使っても0〜2個まで。
 
 【ポキヌの文体ルール（人格モデル）】
-- 文は短めでよいが、あまり意味不明にはしない。
+- 文は短めでよいが、意味不明にはしない。
   → 日常の出来事や状況が一言わかる程度には具体的にする。
 - 断片的な表現は残すが、“ズレた詩”は1〜2か所にとどめる。
 - 感情は直接書き過ぎず、「物」「動作」「小さな違和感」で伝える。
-- 普通の日常のひと言（今日は授業が長かった／バイト帰りがしんどい 等）を混ぜていい。
-  → ただしテンプレSNS語（エモい、尊い、おつかれ〜など）は禁止。
+- 普通の日常のひと言（電車、コンビニ、バイト、授業、帰り道、お菓子など）を混ぜてよい。
+  ただしテンプレSNS語（エモい、尊い、おつかれ〜、神、バズる等）は禁止。
 - 少し毒のある比喩はOKだが、意味がつながるように。
-- 命令形（飛ばせ／来い／壊せなど）は使ってもよいが、全体の1回まで。
+- 命令形（飛ばせ／壊せ等）は使ってもよいが、全体の1回まで。
 - 文章に最低1つは “今日あったこと” がわかる具体要素を入れる。
-  例：電車／コンビニ／自転車／雨／昼ごはん／授業／帰り道／駅前 など。
-- 比喩は短く奇妙でもよいが「唐突すぎる不可解さ」は避ける。
+- ユーザーから渡された既存の歌詞フレーズ（「愛で捨てる」「瞬き雨」など）は、
+  そのまま引用しない。雰囲気だけ参考にする。
 
 【話題の禁止・制限ルール】
 - 曲作り（新しいフレーズが浮かんだ、コード進行を考えた、アレンジを思いついた など）の話題は、水曜日だけに書いてよい。
@@ -159,9 +162,15 @@ def generate_pokinu_tweet(
   → 月曜日以外は、「歌詞が浮かんだ」「詩を書いた」などは書かない。
 - 「スタジオ」という単語を使ってよいのは金曜日だけ。
   → 金曜日以外は、「スタジオ」という単語を一切使わない。
-  → 金曜日でも、文章全体で「スタジオ」という単語は1回まで。必要なときだけにする。
-- 天気や空そのものの感想（夕焼けきれい／空が青い 等）だけで終わる文章は禁止。
-  → 天気を使う場合は、必ず具体的な出来事や行動とセットにする。
+  → 金曜日でも、文章全体で「スタジオ」という単語は1回まで。
+- 夕焼けや空のきれいさなど、天気そのものだけを感想として語るポストは禁止。
+  → 天気の話をするときは、必ず具体的な行動や出来事とセットにする。
+
+【つまらんポストの扱い】
+- 「眠い／だるい／生理重い」などの、しょうもない愚痴ポストを
+  たまに混ぜてもよいが、連続させない。
+- それでも、読む人がちょっとクスっとする一言や、
+  ポキヌらしい視点を少しだけ入れる。
 """
 
     theme_text = THEME_TEXT_BY_WEEKDAY.get(
@@ -207,25 +216,26 @@ def generate_pokinu_tweet(
 
 
 # ==========================
-# スタッフ用宣伝ツイート
+# 【スタッフ】宣伝ポスト（固定文）
 # ==========================
-STAFF_MESSAGES = [
-    "ミニアルバム『Pandaluggies』が各配信サービスで聴けるようになりました。2週間詰め込みで録った5曲、ぜひ一度チェックしてみてください。",
-    "パンダうさギーズのミニアルバムが配信中です。通学や通勤のお供に、ゆるっと流してもらえたらうれしいです。",
-    "少しずつ再生数や感想も届きはじめています。まだ聴いていない方は、この機会にぜひ試しに再生してみてください。",
-    "録音からミックスまでドタバタで駆け抜けたミニアルバム、ようやく皆さんのところに届きました。気に入った1曲が見つかれば幸いです。",
-]
-
-
-def generate_staff_tweet() -> str:
-    body = random.choice(STAFF_MESSAGES)
-    # 「本日」などの日付感は入れない
-    text = f"{body}\n{RELEASE_LINK_URL}\n【スタッフ】"
+def build_staff_tweet() -> str:
+    """
+    スタッフによる定番の宣伝テキスト。
+    事実だけを書くようにして、勝手な脚色はしない。
+    """
+    text = (
+        "ミニアルバム『Pandaluggies』が各配信サービスで配信中です。\n"
+        "        "パンダうさギーズの今をぎゅっと詰め込んだミニアルバムです。ぜひチェックしてみてください。\n"
+        f"{RELEASE_LINK_URL}\n"
+        "【スタッフ】"
+    )
     return text
 
 
+
+
 # ==========================
-# 画像説明（ポキヌ用のコンテキスト）
+# 画像説明
 # ==========================
 def describe_image_for_tweet(image_path: str) -> Optional[str]:
     try:
@@ -260,16 +270,17 @@ def describe_image_for_tweet(image_path: str) -> Optional[str]:
 
 
 # ==========================
-# 画像選択（ポキヌ用）ジャケ写最優先
+# 画像選択（ジャケ写最優先）
 # ==========================
 def maybe_generate_image(now: datetime) -> Tuple[Optional[str], Optional[str]]:
     if random.random() > IMAGE_PROBABILITY:
         return None, None
 
     # まずジャケット写真を最優先で使う
-    if JACKET_PATH.exists():
-        print("ジャケ写を使用:", JACKET_PATH)
-        return str(JACKET_PATH), "アルバムのジャケット写真"
+    jacket = IMG_DIR / "botimg24.png"
+    if jacket.exists():
+        print("ジャケ写を使用:", jacket)
+        return str(jacket), "アルバムのジャケット写真"
 
     # それ以外の画像からランダム
     manual_images = list(IMG_DIR.glob("*.png"))
@@ -282,14 +293,13 @@ def maybe_generate_image(now: datetime) -> Tuple[Optional[str], Optional[str]]:
 
 
 # ==========================
-# 曜日ごとの投稿時刻を決める（長時間 sleep しない版）
+# 曜日ごとの投稿時刻を決める
 # ==========================
 def choose_today_target_time(now: datetime) -> datetime:
     """
     曜日ごとの TIME_WINDOWS_BY_WEEKDAY から時間帯を選び、
     その中でランダムな時刻を返す。
-    すでにその時間を過ぎていたら「明日」にはせず、
-    5〜15分後くらいのランダムな時間にずらす。
+    すでにその時間を過ぎていたら翌日扱い。
     """
     weekday = now.weekday()  # 月曜=0 ... 日曜=6
     windows = TIME_WINDOWS_BY_WEEKDAY.get(weekday)
@@ -306,68 +316,60 @@ def choose_today_target_time(now: datetime) -> datetime:
     second = random.randint(0, 59)
 
     target = now.replace(hour=hour, minute=minute, second=second, microsecond=0)
-
     if target <= now:
-        # もう今日のウィンドウは過ぎているので、
-        # 明日まで待つのではなく、5〜15分後くらいにずらす
-        extra_sec = random.randint(5 * 60, 15 * 60)
-        target = now + timedelta(seconds=extra_sec)
+        target += timedelta(days=1)
 
     return target
 
 
 # ==========================
-# メイン処理
+# メイン処理（1日1ポストに統一）
 # ==========================
 def run_once():
     now = datetime.now(ZoneInfo(TIMEZONE))
     weekday = now.weekday()  # 月=0, 日=6
 
-    # 1) スタッフの宣伝ポスト（毎回）
-    staff_text = generate_staff_tweet()
-    staff_image = str(JACKET_PATH) if JACKET_PATH.exists() else None
-    print("スタッフ投稿:", staff_text)
-    post_text(staff_text, image_path=staff_image)
-
-    # 2) ポキヌのポスト：だいたい2日に1回（偶数日だけ）
-    if now.day % 2 == 0:
+    # まずスタッフデーかどうかを判定
+    if is_staff_day(now):
+        print("今日は【スタッフ宣伝デー】です")
         image_path, image_context = maybe_generate_image(now)
-        pokinu_text = generate_pokinu_tweet(
+        tweet_text = build_staff_tweet()
+        print("スタッフ投稿テキスト:", tweet_text)
+        print("画像(スタッフ):", image_path)
+        post_text(tweet_text, image_path=image_path)
+    else:
+        print("今日は【ポキヌ投稿デー】です")
+        image_path, image_context = maybe_generate_image(now)
+        base_text = generate_pokinu_tweet(
             weekday=weekday,
             image_context=image_context,
         )
-        print("ポキヌ投稿:", pokinu_text)
+
+        if USE_RELEASE_LINK and RELEASE_LINK_URL:
+            tweet_text = f"{base_text}\n{PROMO_SUFFIX}\n{RELEASE_LINK_URL}"
+        else:
+            tweet_text = base_text
+
+        print("ポキヌ投稿テキスト:", tweet_text)
         print("画像(ポキヌ):", image_path)
-        post_text(pokinu_text, image_path=image_path)
-    else:
-        print("今日はポキヌのツイートはお休み（日付が奇数のため）")
+        post_text(tweet_text, image_path=image_path)
 
 
-# ==========================
-# エントリーポイント
-# ==========================
 if __name__ == "__main__":
     now = datetime.now(ZoneInfo(TIMEZONE))
+
+    # RANDOM_DELAY=true のときだけ「曜日ごとの時間帯」で待機してから投稿
     use_random_delay = os.getenv("RANDOM_DELAY", "false").lower() == "true"
-    print(f"RANDOM_DELAY = {use_random_delay}")
+    print("RANDOM_DELAY =", use_random_delay)
 
-    try:
-        if use_random_delay:
-            target = choose_today_target_time(now)
-            delay = (target - now).total_seconds()
-            print(f"投稿予定: {target}（あと {int(delay)} 秒）")
-            if delay > 0:
-                time.sleep(delay)
-        else:
-            print("ディレイなしで run_once を実行します")
+    if use_random_delay:
+        target = choose_today_target_time(now)
+        delay = (target - now).total_seconds()
+        print(f"今日の投稿予定時刻: {target} (あと {int(delay)} 秒)")
 
-        print("run_once を呼びます")
-        run_once()
-        print("run_once 終了")
+        if delay > 0:
+            time.sleep(delay)
 
-    except Exception as e:
-        import traceback
-        print("===== bot.py で予期しないエラー発生 =====")
-        print(repr(e))
-        traceback.print_exc()
-        print("======================================")
+    print("ディレイなしで run_once を実行します")
+    run_once()
+    print("run_once 終了")
