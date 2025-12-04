@@ -1,222 +1,167 @@
 import os
-import base64
 import random
 import time
+import logging
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional
 
-from zoneinfo import ZoneInfo
 import tweepy
-from openai import OpenAI
-from dotenv import load_dotenv
-
-# .env 用（ローカルでだけ使われる。Render では無視されてもOK）
-load_dotenv()
+from PIL import Image
 
 # ==========================
-# API キー（環境変数から読む）
+# ログ設定
+# ==========================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+logger = logging.getLogger(__name__)
+
+# ==========================
+# 環境変数
 # ==========================
 API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+BEARER_TOKEN = os.getenv("BEARER_TOKEN")
 
-print("DEBUG API_KEY is None? ->", API_KEY is None)
+# デバッグフラグ（Render の環境変数で制御）
+DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
-# ==========================
-# 設定
-# ==========================
-TIMEZONE = "Asia/Tokyo"
+logger.info(f"DEBUG: {DEBUG}")
 
-# 画像を付ける確率
-IMAGE_PROBABILITY = 0.40
-
-# ⭐ 配信リンクと宣伝文
-USE_RELEASE_LINK = True
-RELEASE_LINK_URL = "https://big-up.style/uviwifz2tO"
-PROMO_SUFFIX = "そして配信中！ ダウンロードしてね！"
-
-# 「スタッフ宣伝デー」判定
-# day % 7 == 1 の日だけ【スタッフ】ポスト、それ以外はポキヌ
-def is_staff_day(now: datetime) -> bool:
-    return now.day % 7 == 1
-
-# 曜日ごとの投稿時間ウィンドウ
-# 0=月曜, 1=火曜, ... 6=日曜
-# (start_hour, end_hour) は「start〜end-1時台」のどこか
-TIME_WINDOWS_BY_WEEKDAY = {
-    0: [(19, 22)],              # 月: 19〜21時台
-    1: [(19, 22)],              # 火
-    2: [(19, 22)],              # 水
-    3: [(19, 22)],              # 木
-    4: [(18, 21)],              # 金: 少し早め
-    5: [(13, 16), (20, 23)],    # 土: 昼 or 夜
-    6: [(13, 16), (20, 23)],    # 日: 昼 or 夜
-}
-
-# 曜日ごとの「話題テーマ」説明
-THEME_TEXT_BY_WEEKDAY = {
-    0: "月曜日。学校や授業、通学のこと、月曜日ならではの気分について。歌詞やことば、詩がふっと浮かんだ話は月曜日だけOK。",
-    1: "火曜日。バイトや放課後、友だちとの帰り道、日常のちょっとした出来事について。",
-    2: "水曜日。曲作りやフレーズ、コード進行、アレンジ、練習の工夫など、音楽づくりそのものについて。曲作りの話をしていいのは水曜日だけ。",
-    3: "木曜日。楽器や機材、音作りのこだわり、小さな発見について。",
-    4: "金曜日。バンド活動全体のこと、リハーサルや本番前後の気持ちなど。『スタジオ』という単語を使ってよいのは金曜日だけで、文章中に1回まで。",
-    5: "土曜日。街に出かけたこと、イベント、買い物、友だちとの時間など外の世界の雰囲気について。",
-    6: "日曜日。一週間を振り返る気持ち、のんびりした時間、明日からまたがんばろうと思えるような穏やかな話題について。",
-}
-
-# 画像フォルダ
-BASE_DIR = Path(__file__).resolve().parent
-IMG_DIR = BASE_DIR / "BOTimg"
-IMG_DIR.mkdir(exist_ok=True)
-
-# OpenAI クライアント
-oa_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else OpenAI()
+if not API_KEY or not API_SECRET or not ACCESS_TOKEN or not ACCESS_TOKEN_SECRET:
+    logger.error("Twitter API の環境変数が足りません。")
+    raise SystemExit("Twitter API の環境変数が足りません。")
 
 # ==========================
-# X クライアント
+# Twitter クライアント
 # ==========================
-def create_client_v2() -> tweepy.Client:
-    return tweepy.Client(
-        consumer_key=API_KEY,
-        consumer_secret=API_SECRET,
-        access_token=ACCESS_TOKEN,
-        access_token_secret=ACCESS_TOKEN_SECRET,
-    )
+auth = tweepy.OAuth1UserHandler(
+    API_KEY,
+    API_SECRET,
+    ACCESS_TOKEN,
+    ACCESS_TOKEN_SECRET,
+)
 
+api = tweepy.API(auth)
 
-def create_api_v1() -> tweepy.API:
-    auth = tweepy.OAuth1UserHandler(
-        API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET
-    )
-    return tweepy.API(auth)
-
+# v2 用クライアント（画像アップロードなどは v1.1 を使用）
+client = tweepy.Client(
+    consumer_key=API_KEY,
+    consumer_secret=API_SECRET,
+    access_token=ACCESS_TOKEN,
+    access_token_secret=ACCESS_TOKEN_SECRET,
+)
 
 # ==========================
-# 投稿
+# 定数
 # ==========================
-def post_text(text: str, image_path: Optional[str] = None) -> Optional[str]:
-    client = create_client_v2()
+
+# リリース URL（固定）
+RELEASE_LINK_URL = "https://linkco.re/XXXXXXXX"  # 実際のURLに差し替え
+
+# 画像ディレクトリ
+IMAGE_BASE_DIR = "images"
+PANDA_DIR = os.path.join(IMAGE_BASE_DIR, "panda")
+USA_DIR = os.path.join(IMAGE_BASE_DIR, "usa")
+GEESE_DIR = os.path.join(IMAGE_BASE_DIR, "geese")
+STAFF_DIR = os.path.join(IMAGE_BASE_DIR, "staff")
+
+# ポスト頻度
+STAFF_POST_PER_DAY = 1           # スタッフ投稿：毎日1回
+POKINU_POST_INTERVAL_DAYS = 2    # ポキヌ：2日に1回
+
+# ==========================
+# ユーティリティ
+# ==========================
+def choose_random_image(directory: str) -> Optional[str]:
+    """指定ディレクトリからランダムに画像パスを1つ返す"""
+    if not os.path.isdir(directory):
+        logger.warning(f"画像ディレクトリが見つかりません: {directory}")
+        return None
+
+    files = [
+        os.path.join(directory, f)
+        for f in os.listdir(directory)
+        if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif"))
+    ]
+
+    if not files:
+        logger.warning(f"画像ファイルが見つかりません: {directory}")
+        return None
+
+    return random.choice(files)
+
+
+def upload_media(image_path: str) -> Optional[str]:
+    """画像を Twitter にアップロードして media_id を返す"""
+    try:
+        media = api.media_upload(image_path)
+        return media.media_id_string
+    except Exception as e:
+        logger.exception(f"画像アップロードに失敗しました: {e}")
+        return None
+
+
+def post_tweet(text: str, media_path: Optional[str] = None) -> Optional[int]:
+    """テキスト（と任意で画像）をツイートする"""
+
+    if DEBUG:
+        logger.info("=== DEBUG モードのためツイートしません ===")
+        logger.info(f"ツイート内容:\n{text}")
+        if media_path:
+            logger.info(f"添付画像: {media_path}")
+        return None
 
     media_ids = None
-    if image_path:
-        try:
-            api = create_api_v1()
-            media = api.media_upload(image_path)
-            media_ids = [media.media_id]
-            print(f"画像アップロード成功: {image_path}")
-        except Exception as e:
-            print("画像アップロードでエラー:", e)
+    if media_path:
+        media_id = upload_media(media_path)
+        if media_id:
+            media_ids = [media_id]
 
     try:
-        response = client.create_tweet(text=text, media_ids=media_ids)
-        tweet_id = response.data["id"]
-        print("投稿成功:", text)
-        print(f"URL: https://x.com/i/web/status/{tweet_id}")
+        if media_ids:
+            tweet = client.create_tweet(text=text, media_ids=media_ids)
+        else:
+            tweet = client.create_tweet(text=text)
+
+        tweet_id = tweet.data["id"]
+        logger.info(f"ツイート投稿成功: https://twitter.com/user/status/{tweet_id}")
         return tweet_id
     except Exception as e:
-        print("テキスト投稿でエラー:", e)
+        logger.exception(f"ツイート投稿に失敗しました: {e}")
         return None
 
 
 # ==========================
-# ポキヌ用 AI 文章生成
+# テキスト生成（ポキヌ）
 # ==========================
-def generate_pokinu_tweet(
-    weekday: int,
-    image_context: Optional[str] = None,
-) -> str:
-    base_instruction = """
-あなたは日本の大学生バンド「パンダうさギーズ」のボーカル「ポキヌ」です。
-あなた自身のアカウントでXに投稿するつぶやきを書きます。
-署名は付けません（文末に名前は書かない）。
-"""
+POKINU_TWEETS: List[str] = [
+    # ここに 10 個のポキヌ用ツイートを入れておく
+    "ホームで立ってたら突然ランドセルの子に「その…」って話しかけられて、なんだろうと思ったら靴ひも踏んづけてた。",
+    "自販機の前で小銭を落として、拾おうとしたら知らないおじさんも一緒にしゃがんで探してくれた。あの一瞬の共同作業なんだったんだろう。",
+    "コンビニでガリガリ君買ったら当たりが出た。でもなんとなく交換しそびれて、財布の中で神様みたいに祀ってある。",
+    "傘を忘れて駅で立ち尽くしてたら、後ろのサラリーマンが「どうせタクシーなんで」と言って傘を押し付けるように渡して去っていった。",
+    "カップラーメンにお湯入れて3分待つ間にSNS開いたら、気づいたら12分たってて、麺の方が人生経験積んだ顔してた。",
+    "エレベーターで二人きりになった人が降り際に「よい一日を」と言ってくれた。行き先ボタン押しただけなのに、ちょっと昇進した気分になった。",
+    "スーパーで流れてるBGMに合わせて、野菜コーナーのおばあちゃんが小さくステップ踏んでた。キャベツがディスコボールに見えてきた。",
+    "スマホのメモに『こうなる未来は嫌だ』って書いてあって、何のことかわからないけど、とりあえず今日は早く寝ることにした。",
+    "自転車こいでたら向かい風が強すぎて、「これもう見えない敵と腕相撲してるだろ」と思いながら必死で帰った。",
+    "洗濯物を干してたら、となりのベランダから「今日も戦ってますねえ」とおばさんに声かけられた。靴下一足ずつが敵兵みたいに見えてきた。",
+]
 
-    common_rule = """
-【出力形式】
-- 1〜5行のテキストにする。
-- 各行は短くてよい。行と行の間は改行で区切る。
-- 行頭に「・」や「#」などの記号は付けない。
-- ハッシュタグは禁止。
-- 絵文字は使っても0〜2個まで。
-
-【ポキヌの文体ルール（人格モデル）】
-- 文は短めでよいが、意味不明にはしない。
-  → 日常の出来事や状況が一言わかる程度には具体的にする。
-- 断片的な表現は残すが、“ズレた詩”は1〜2か所にとどめる。
-- 感情は直接書き過ぎず、「物」「動作」「小さな違和感」で伝える。
-- 普通の日常のひと言（電車、コンビニ、バイト、授業、帰り道、お菓子など）を混ぜてよい。
-  ただしテンプレSNS語（エモい、尊い、おつかれ〜、神、バズる等）は禁止。
-- 少し毒のある比喩はOKだが、意味がつながるように。
-- 命令形（飛ばせ／壊せ等）は使ってもよいが、全体の1回まで。
-- 文章に最低1つは “今日あったこと” がわかる具体要素を入れる。
-- ユーザーから渡された既存の歌詞フレーズ（「愛で捨てる」「瞬き雨」など）は、
-  そのまま引用しない。雰囲気だけ参考にする。
-
-【話題の禁止・制限ルール】
-- 曲作り（新しいフレーズが浮かんだ、コード進行を考えた、アレンジを思いついた など）の話題は、水曜日だけに書いてよい。
-  → 水曜日以外は、曲作りの話題は絶対に書かない。
-- 歌詞・ことば・詩が浮かんだ、という話題は、月曜日だけに書いてよい。
-  → 月曜日以外は、「歌詞が浮かんだ」「詩を書いた」などは書かない。
-- 「スタジオ」という単語を使ってよいのは金曜日だけ。
-  → 金曜日以外は、「スタジオ」という単語を一切使わない。
-  → 金曜日でも、文章全体で「スタジオ」という単語は1回まで。
-- 夕焼けや空のきれいさなど、天気そのものだけを感想として語るポストは禁止。
-  → 天気の話をするときは、必ず具体的な行動や出来事とセットにする。
-
-【つまらんポストの扱い】
-- 「眠い／だるい／生理重い」などの、しょうもない愚痴ポストを
-  たまに混ぜてもよいが、連続させない。
-- それでも、読む人がちょっとクスっとする一言や、
-  ポキヌらしい視点を少しだけ入れる。
-"""
-
-    theme_text = THEME_TEXT_BY_WEEKDAY.get(
-        weekday,
-        "特に決まったテーマはないので、パンダうさギーズの日常の中から自然な一言を考えてください。",
-    )
-
-    theme_part = f"\n【今日の曜日とテーマ】\n{theme_text}\n"
-
-    if image_context:
-        img_part = (
-            "\n【画像の雰囲気】\n"
-            f"{image_context}\n"
-            "まずはこの画像の空気や違和感に合う内容を最優先で考えてください。\n"
-        )
-    else:
-        img_part = ""
-
-    system_prompt = base_instruction + common_rule + theme_part + img_part
-
-    response = oa_client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": "上の条件をすべて守って、今日のツイート文を1つだけ書いてください。",
-            },
-        ],
-        max_tokens=200,
-        temperature=0.9,
-    )
-
-    text = response.choices[0].message.content.strip()
-
-    # 行数を5行までに制限（余分な空行も整理）
-    lines = [line.rstrip() for line in text.splitlines() if line.strip() != ""]
-    if len(lines) > 5:
-        lines = lines[:5]
-    text = "\n".join(lines)
-
-    return text
+def build_pokinu_tweet() -> str:
+    """ポキヌ用ツイートをランダムに1つ返す"""
+    base_text = random.choice(POKINU_TWEETS)
+    hashtag = "\n\n#パンダうさギーズ #ポキヌ"
+    return base_text + hashtag
 
 
 # ==========================
-# 【スタッフ】宣伝ポスト（固定文）
+# テキスト生成（スタッフ）
 # ==========================
 def build_staff_tweet() -> str:
     """
@@ -225,151 +170,126 @@ def build_staff_tweet() -> str:
     """
     text = (
         "ミニアルバム『Pandaluggies』が各配信サービスで配信中です。\n"
-        "        "パンダうさギーズの今をぎゅっと詰め込んだミニアルバムです。ぜひチェックしてみてください。\n"
+        "パンダうさギーズの今をぎゅっと詰め込んだミニアルバムです。ぜひチェックしてみてください。\n"
         f"{RELEASE_LINK_URL}\n"
         "【スタッフ】"
     )
     return text
 
 
-
-
 # ==========================
 # 画像説明
 # ==========================
 def describe_image_for_tweet(image_path: str) -> Optional[str]:
-    try:
-        with open(image_path, "rb") as f:
-            image_bytes = f.read()
-        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-        resp = oa_client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
-                {"role": "system", "content": "画像の雰囲気を簡潔に説明するアシスタントです。"},
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "写真の雰囲気を50文字以内で日本語で説明してください。",
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": "data:image/png;base64," + image_b64},
-                        },
-                    ],
-                },
-            ],
-            max_tokens=120,
-        )
-        return resp.choices[0].message.content.strip()
-    except Exception as e:
-        print("画像解析でエラー:", e)
+    """
+    画像を見て一言コメントを返す（将来拡張用。今はファイル名ベース）
+    """
+    if not image_path:
         return None
 
+    filename = os.path.basename(image_path)
 
-# ==========================
-# 画像選択（ジャケ写最優先）
-# ==========================
-def maybe_generate_image(now: datetime) -> Tuple[Optional[str], Optional[str]]:
-    if random.random() > IMAGE_PROBABILITY:
-        return None, None
+    if "panda" in filename.lower():
+        return "今日はパンダが主役。"
+    if "usa" in filename.lower():
+        return "今日はうさぎが主役。"
+    if "geese" in filename.lower():
+        return "今日はガチョウーズが集結。"
 
-    # まずジャケット写真を最優先で使う
-    jacket = IMG_DIR / "botimg24.png"
-    if jacket.exists():
-        print("ジャケ写を使用:", jacket)
-        return str(jacket), "アルバムのジャケット写真"
-
-    # それ以外の画像からランダム
-    manual_images = list(IMG_DIR.glob("*.png"))
-    if not manual_images:
-        return None, None
-
-    chosen = random.choice(manual_images)
-    image_context = describe_image_for_tweet(str(chosen))
-    return str(chosen), image_context
+    return None
 
 
-# ==========================
-# 曜日ごとの投稿時刻を決める
-# ==========================
-def choose_today_target_time(now: datetime) -> datetime:
+def build_image_tweet_text(base_text: str, image_path: Optional[str]) -> str:
     """
-    曜日ごとの TIME_WINDOWS_BY_WEEKDAY から時間帯を選び、
-    その中でランダムな時刻を返す。
-    すでにその時間を過ぎていたら翌日扱い。
+    ベースのテキストに、画像からの一言コメントを足す
     """
-    weekday = now.weekday()  # 月曜=0 ... 日曜=6
-    windows = TIME_WINDOWS_BY_WEEKDAY.get(weekday)
-
-    # 万が一設定がなかった場合は 19〜22時をデフォルトにする
-    if not windows:
-        windows = [(19, 22)]
-
-    # その曜日の候補から1つ選ぶ
-    start_hour, end_hour = random.choice(windows)
-
-    hour = random.randint(start_hour, end_hour - 1)
-    minute = random.randint(0, 59)
-    second = random.randint(0, 59)
-
-    target = now.replace(hour=hour, minute=minute, second=second, microsecond=0)
-    if target <= now:
-        target += timedelta(days=1)
-
-    return target
+    comment = describe_image_for_tweet(image_path) if image_path else None
+    if comment:
+        return f"{base_text}\n\n{comment}"
+    return base_text
 
 
 # ==========================
-# メイン処理（1日1ポストに統一）
+# ポスト種別の管理
+# ==========================
+class PostType:
+    STAFF = "staff"
+    POKINU = "pokinu"
+
+
+def should_post_pokinu(today: datetime) -> bool:
+    """
+    ポキヌを投稿する日かどうか。
+    2日に1回、偶数日をポキヌの日とする簡易ロジック。
+    """
+    return today.toordinal() % POKINU_POST_INTERVAL_DAYS == 0
+
+
+def decide_today_post_types(today: Optional[datetime] = None) -> List[str]:
+    """
+    今日投稿すべき投稿種別のリストを返す。
+    - スタッフ投稿：毎日1本
+    - ポキヌ：2日に1本
+    """
+    if today is None:
+        today = datetime.now()
+
+    post_types: List[str] = [PostType.STAFF]
+
+    if should_post_pokinu(today):
+        post_types.append(PostType.POKINU)
+
+    logger.info(f"本日の投稿種別: {post_types}")
+    return post_types
+
+
+# ==========================
+# メイン処理
 # ==========================
 def run_once():
-    now = datetime.now(ZoneInfo(TIMEZONE))
-    weekday = now.weekday()  # 月=0, 日=6
+    """
+    1回分の実行。
+    - 今日投稿すべき投稿の種類を決定
+    - スタッフ投稿（テキスト＋画像）
+    - ポキヌ（テキスト＋画像）※必要な日のみ
+    """
 
-    # まずスタッフデーかどうかを判定
-    if is_staff_day(now):
-        print("今日は【スタッフ宣伝デー】です")
-        image_path, image_context = maybe_generate_image(now)
-        tweet_text = build_staff_tweet()
-        print("スタッフ投稿テキスト:", tweet_text)
-        print("画像(スタッフ):", image_path)
-        post_text(tweet_text, image_path=image_path)
-    else:
-        print("今日は【ポキヌ投稿デー】です")
-        image_path, image_context = maybe_generate_image(now)
-        base_text = generate_pokinu_tweet(
-            weekday=weekday,
-            image_context=image_context,
-        )
+    today = datetime.now()
+    post_types = decide_today_post_types(today)
 
-        if USE_RELEASE_LINK and RELEASE_LINK_URL:
-            tweet_text = f"{base_text}\n{PROMO_SUFFIX}\n{RELEASE_LINK_URL}"
-        else:
-            tweet_text = base_text
+    # スタッフ投稿
+    if PostType.STAFF in post_types:
+        staff_text = build_staff_tweet()
+        staff_image = choose_random_image(STAFF_DIR) or choose_random_image(PANDA_DIR)
+        tweet_text = build_image_tweet_text(staff_text, staff_image)
+        logger.info("スタッフ投稿を行います。")
+        post_tweet(tweet_text, staff_image)
 
-        print("ポキヌ投稿テキスト:", tweet_text)
-        print("画像(ポキヌ):", image_path)
-        post_text(tweet_text, image_path=image_path)
+    # ポキヌ投稿（ある日のみ）
+    if PostType.POKINU in post_types:
+        pokinu_text = build_pokinu_tweet()
+        # パンダ / うさ / ガチョウ からランダムで1枚
+        pokinu_image_dirs = [PANDA_DIR, USA_DIR, GEESE_DIR]
+        random_dir = random.choice(pokinu_image_dirs)
+        pokinu_image = choose_random_image(random_dir)
+        tweet_text = build_image_tweet_text(pokinu_text, pokinu_image)
+        logger.info("ポキヌ投稿を行います。")
+        post_tweet(tweet_text, pokinu_image)
+
+
+def main():
+    """
+    Render の cron から叩かれる想定のメイン関数。
+    1回実行したら終了。
+    """
+    logger.info("===== pandausagies-bot 実行開始 =====")
+    try:
+        run_once()
+    except Exception as e:
+        logger.exception(f"致命的なエラーが発生しました: {e}")
+    finally:
+        logger.info("===== pandausagies-bot 実行終了 =====")
 
 
 if __name__ == "__main__":
-    now = datetime.now(ZoneInfo(TIMEZONE))
-
-    # RANDOM_DELAY=true のときだけ「曜日ごとの時間帯」で待機してから投稿
-    use_random_delay = os.getenv("RANDOM_DELAY", "false").lower() == "true"
-    print("RANDOM_DELAY =", use_random_delay)
-
-    if use_random_delay:
-        target = choose_today_target_time(now)
-        delay = (target - now).total_seconds()
-        print(f"今日の投稿予定時刻: {target} (あと {int(delay)} 秒)")
-
-        if delay > 0:
-            time.sleep(delay)
-
-    print("ディレイなしで run_once を実行します")
-    run_once()
-    print("run_once 終了")
+    main()
