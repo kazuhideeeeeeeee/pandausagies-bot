@@ -2,7 +2,7 @@ import os
 import base64
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -23,6 +23,8 @@ ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+print("DEBUG API_KEY is None? ->", API_KEY is None)
+
 # ==========================
 # 設定
 # ==========================
@@ -36,7 +38,7 @@ USE_RELEASE_LINK = True
 RELEASE_LINK_URL = "https://big-up.style/uviwifz2tO"
 PROMO_SUFFIX = "そして配信中！ ダウンロードしてね！"
 
-# 曜日ごとの投稿時間ウィンドウ
+# 曜日ごとの投稿時間ウィンドウ（今は「テーマ用途」にのみ使用）
 TIME_WINDOWS_BY_WEEKDAY = {
     0: [(19, 22)],              # 月
     1: [(19, 22)],              # 火
@@ -116,7 +118,6 @@ def post_text(text: str, image_path: Optional[str] = None) -> Optional[str]:
 # AI文章生成（ポキヌ人格）
 # ==========================
 def generate_ai_tweet(weekday: int, image_context: Optional[str] = None) -> str:
-
     base_instruction = """
 あなたは日本の大学生バンド「パンダうさギーズ」のボーカル「ポキヌ」です。
 あなた自身のアカウントでXに投稿するつぶやきを書きます。
@@ -164,7 +165,7 @@ def generate_ai_tweet(weekday: int, image_context: Optional[str] = None) -> str:
     system_prompt = base_instruction + common_rule + theme_part + img_part
 
     response = oa_client.chat.completions.create(
-        model="gpt-4o-mini",  # 【修正】gpt-4.1-mini -> gpt-4o-mini
+        model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": "今日のツイート文を1つだけ書いてください。"},
@@ -190,7 +191,7 @@ def describe_image_for_tweet(image_path: str) -> Optional[str]:
             img = base64.b64encode(f.read()).decode()
 
         resp = oa_client.chat.completions.create(
-            model="gpt-4o-mini",  # 【修正】gpt-4.1-mini -> gpt-4o-mini
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "画像の雰囲気を簡潔に説明するアシスタントです。"},
                 {
@@ -211,34 +212,54 @@ def describe_image_for_tweet(image_path: str) -> Optional[str]:
 
 
 # ==========================
-# 画像選択
+# 画像選択（ランダム＋ジャケ写だけ特別扱い）
 # ==========================
 def maybe_generate_image(now: datetime) -> Tuple[Optional[str], Optional[str]]:
+    # 画像を付けるかどうかを確率で決定
     if random.random() > IMAGE_PROBABILITY:
         return None, None
 
-    # 画像フォルダ内の全pngを取得
+    # BOTimg 内の png を全部取得
     images = list(IMG_DIR.glob("*.png"))
+
     if not images:
         return None, None
 
-    # 【修正】まずはランダムに選ぶ
+    # ランダムに 1 枚選ぶ
     chosen = random.choice(images)
-    
-    # 【修正】もし選ばれたのが特定のジャケ写なら、固定の説明文を返す
+
+    # ジャケットなら説明文を固定
     if chosen.name == "botimg24.png":
+        print("ジャケット画像を使用:", chosen)
         return str(chosen), "アルバムのジャケット写真"
 
-    # それ以外はAIに説明させる
-    context = describe_image_for_tweet(str(chosen))
-    return str(chosen), context
+    # それ以外は画像説明を生成
+    image_context = describe_image_for_tweet(str(chosen))
+    return str(chosen), image_context
 
 
 # ==========================
-# 時間を決める
+# メイン処理
 # ==========================
-def choose_today_target_time(now: datetime) -> datetime:
+def run_once():
+    now = datetime.now(ZoneInfo(TIMEZONE))
     weekday = now.weekday()
-    windows = TIME_WINDOWS_BY_WEEKDAY.get(weekday, [(19, 22)])
 
-    start, end
+    image_path, image_context = maybe_generate_image(now)
+    base_text = generate_ai_tweet(weekday, image_context)
+
+    if USE_RELEASE_LINK and RELEASE_LINK_URL:
+        tweet_text = f"{base_text}\n{PROMO_SUFFIX}\n{RELEASE_LINK_URL}"
+    else:
+        tweet_text = base_text
+
+    print("生成されたツイート文:", tweet_text)
+    print("画像:", image_path)
+
+    post_text(tweet_text, image_path=image_path)
+
+
+if __name__ == "__main__":
+    # ⚠ Render の Cron 想定：起動したら即1回だけ投稿して終了
+    now = datetime.now(ZoneInfo(TIMEZONE))
+    run_once()
