@@ -124,7 +124,8 @@ def generate_ai_tweet(weekday: int, image_context: Optional[str] = None) -> str:
 署名は付けません。
 """
 
-        common_rule = """
+    # 【修正】インデントを修正しました（左に詰めました）
+    common_rule = """
 【出力形式】
 - 1〜5行のテキストにする。
 - 短くてよい。行と行の間は改行。
@@ -160,7 +161,6 @@ def generate_ai_tweet(weekday: int, image_context: Optional[str] = None) -> str:
 - 同じテーマ（学校／月曜日／休み）を書く場合も、
   毎回違う具体的な出来事や物（教室、電車、コンビニ、雨、ノートなど）を選ぶ。
 """
-
 
     theme_text = THEME_TEXT_BY_WEEKDAY.get(weekday, "")
     theme_part = f"\n【今日の曜日とテーマ】\n{theme_text}\n"
