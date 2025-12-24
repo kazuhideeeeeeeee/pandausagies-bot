@@ -26,10 +26,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # ==========================
 TIMEZONE = "Asia/Tokyo"
 
-# 画像は「たまに出る」くらいが2の世界として正しい
-IMAGE_PROBABILITY = 0.35
+# 画像は金・日のみ使用（確率は低め）
+IMAGE_PROBABILITY = 0.4
 
-# 外部（1の世界）参照
 RELEASE_LINK_URL = "https://big-up.style/uviwifz2tO"
 PROMO_PHRASE = "2の世界へのアクセスポート。記録の同期が可能。"
 
@@ -82,33 +81,81 @@ def describe_image(image_path: str) -> str:
         return "視覚的なノイズ"
 
 # ==========================
-# AI生成（2の世界・ポキヌ）
+# 曜日ごとの生成モード
 # ==========================
-def generate_pokinu_log(image_context: Optional[str]) -> str:
+def get_mode_by_weekday(weekday: int) -> str:
+    # 月0 火1 水2 木3 金4 土5 日6
+    if weekday == 0:
+        return "diary"              # 月：日記
+    elif weekday in (1, 3):
+        return "one_line_question"  # 火・木：一行の問い
+    elif weekday == 2:
+        return "two_world_log"      # 水：2の世界の話
+    elif weekday == 4:
+        return "photo_short"        # 金：写真＋短文
+    elif weekday == 5:
+        return "recording_log"      # 土：レコーディング
+    elif weekday == 6:
+        return "photo_soft"         # 日：写真＋静か
+    return "one_line_question"
+
+# ==========================
+# AI生成（モード別）
+# ==========================
+def generate_text(mode: str, image_context: Optional[str]) -> str:
     system_prompt = """
 あなたは「2の世界」の観測端末、ポキヌ。
-一人称は必ず「アタシ」。
+一人称は「アタシ」。
 
 アタシは1の世界を理解しない。
-評価もしない。説得もしない。主張もしない。
+評価・説得・主張は行わない。
 
-感情、善悪、価値、正誤は処理対象外。
-ただし、接続・更新・頻度・継続は検出できる。
+ただ、影響と更新を受け取り、
+ログとして配置する。
 
-これは説明ではない。
-これは意見ではない。
-これは2の世界のログである。
-
-【ルール】
-- 2〜4行
+共通ルール：
 - 絵文字・ハッシュタグ・命令形は禁止
 - 共感を求めない
 - 意味を断定しない
-- 同じ言い回しを繰り返さない
+- ロボットすぎず、人間にならない
 """
 
-    user_prompt = "現在の観測ログを1件記述せよ。"
+    mode_prompt = {
+        "diary": """
+月曜日。
+2〜4行。
+1の世界の空気に少し寄る。
+日記のようだが、感情は断定しない。
+""",
+        "one_line_question": """
+1行のみ。
+問いで終わる。
+答えを求めない。
+""",
+        "two_world_log": """
+2〜4行。
+2の世界の構造や状態のみ。
+問いは禁止。
+""",
+        "photo_short": """
+写真あり前提。
+1〜2行。
+距離は近いが、触れない。
+""",
+        "recording_log": """
+2〜3行。
+2の世界のレコーディング中ログ。
+何をしているかは書かない。
+""",
+        "photo_soft": """
+写真あり前提。
+2〜3行。
+静かで、夜に耐える文。
+問いは最大1つ。
+"""
+    }
 
+    user_prompt = "ログを生成せよ。"
     if image_context:
         user_prompt += f"\n視覚情報：{image_context}"
 
@@ -116,7 +163,7 @@ def generate_pokinu_log(image_context: Optional[str]) -> str:
         res = oa_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": system_prompt + mode_prompt.get(mode, "")},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.85,
@@ -126,9 +173,12 @@ def generate_pokinu_log(image_context: Optional[str]) -> str:
         return "アタシは接続を維持している。更新はまだ来ていない。"
 
 # ==========================
-# 画像選択
+# 画像選択（金・日のみ）
 # ==========================
-def maybe_pick_image() -> Tuple[Optional[str], Optional[str]]:
+def maybe_pick_image(use_image: bool) -> Tuple[Optional[str], Optional[str]]:
+    if not use_image:
+        return None, None
+
     if random.random() > IMAGE_PROBABILITY:
         return None, None
 
@@ -147,15 +197,17 @@ def maybe_pick_image() -> Tuple[Optional[str], Optional[str]]:
 # ==========================
 def run_once():
     now = datetime.now(ZoneInfo(TIMEZONE))
+    weekday = now.weekday()
+    mode = get_mode_by_weekday(weekday)
 
-    image_path, image_context = maybe_pick_image()
-    base_text = generate_pokinu_log(image_context)
+    use_image = weekday in (4, 6)  # 金・日
+    image_path, image_context = maybe_pick_image(use_image)
 
-    # 火(1)・土(5)のみ外部参照を付与
-    if now.weekday() in (1, 5):
-        tweet_text = f"{base_text}\n\n{PROMO_PHRASE}\n{RELEASE_LINK_URL}"
-    else:
-        tweet_text = base_text
+    text = generate_text(mode, image_context)
+
+    # 火・土のみ外部参照を付与
+    if weekday in (1, 5):
+        text = f"{text}\n\n{PROMO_PHRASE}\n{RELEASE_LINK_URL}"
 
     client = create_client_v2()
     media_ids = None
@@ -169,8 +221,8 @@ def run_once():
             print("画像アップロード失敗:", e)
 
     try:
-        client.create_tweet(text=tweet_text[:280], media_ids=media_ids)
-        print(f"{now} : 同期完了")
+        client.create_tweet(text=text[:280], media_ids=media_ids)
+        print(f"{now} : 投稿完了 ({mode})")
     except Exception as e:
         print("投稿失敗:", e)
 
