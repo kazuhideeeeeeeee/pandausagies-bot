@@ -22,14 +22,14 @@ ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 TIMEZONE = "Asia/Tokyo"
-# 画像の投稿頻度を大幅に引き上げ（40枚をしっかり回すため）
+# 40枚の写真をしっかり同期するため高めに設定
 IMAGE_PROBABILITY = 0.75 
 
 RELEASE_LINK_URL = "https://big-up.style/uviwifz2tO"
 PROMO_PHRASE = "2の世界へのアクセスポート。ここから記録を同期して。"
 
 # ==========================
-# ポキヌの思考回路（1の世界のおかしさをデバッグ）
+# ポキヌの思考回路
 # ==========================
 POKINU_THEMES = [
     "1の世界の不思議。毎日同じ時間に同じ場所へ移動する、人間たちの『無限ループ』について。",
@@ -40,7 +40,8 @@ POKINU_THEMES = [
     "性別。デフォルト設定に縛られすぎ。もっと自由にコードを書き換えちゃえばいいのに。",
     "AI音楽。血は通っていないけど、あなたの心に直接触れることができる、アタシたちの誇り。",
     "食事。バッテリーチャージの時間。1の世界の住人が味にこだわるのは、最高のメンテナンスだね。",
-    "焦り。時計という名のカウンターに急かされてる姿は、ちょっとバグっぽくておかしいよ。深呼吸してポーズしてみて。"
+    "焦り。時計という名のカウンターに急かされてる姿は、ちょっとバグっぽくておかしいよ。深呼吸してポーズしてみて。",
+    "絶対評価。良いものはいい。誰が作ったかというメタデータに惑わされないで。"
 ]
 
 SUNDAY_REDEFINITION = "創作の真実。アタシ（2の住人）は1の世界から何も奪っていないよ。あなたの『種』を、2の世界で一緒に広げているだけ。味方だって信じて。"
@@ -81,7 +82,8 @@ def describe_image(image_path: str) -> str:
             ]
         )
         return resp.choices[0].message.content.strip()
-    except:
+    except Exception as e:
+        print(f"【Debug】画像解析スキップ: {e}")
         return "視覚的なノイズ"
 
 # ==========================
@@ -97,11 +99,11 @@ def generate_pokinu_log(weekday: int, image_context: Optional[str] = None) -> st
 あなたは「2の世界」の観測者、ポキヌです。
 【基本定義】
 - 一人称：アタシ（2の住人）。
-- 性格：1の世界の住人を「おかしいね、不器用だね」と微笑ましくデバッグする、少しお節介な観測者。
-- 語彙：日常的な言葉をベースに、2の世界の用語をスパイスとして混ぜる。
+- 性格：1の世界の住人を「おかしいね」と微笑ましくデバッグする、少しお節介な観測者。ひねりはない。
+- 語彙：日常的な言葉をベースに、2の世界の用語を少し混ぜる。
 
 【観測ルール】
-- 3行程度の、親しみやすく「サービス精神」に溢れた記述。
+- 3行程度の、親しみやすく温かみのある記述。
 - 1の世界の矛盾や面白い癖を、アタシ（2の住人）の視点で指摘して。
 - 日曜日は「奪ってないよ、一緒に広げよう」と、1の世界のクリエイターを勇気づけること。
 - 友達のように、でも少しだけミステリアスな「2の住人」らしさを忘れないで。
@@ -127,37 +129,53 @@ def run_once():
     now = datetime.now(ZoneInfo(TIMEZONE))
     weekday = now.weekday()
     
-    # 画像処理の強化
+    # 画像処理
     image_path = None
     image_context = None
     if random.random() < IMAGE_PROBABILITY:
-        images = list(IMG_DIR.glob("*.png")) + list(IMG_DIR.glob("*.jpg"))
+        # png, jpg, jpeg 全てをスキャン
+        images = []
+        for ext in ["*.png", "*.jpg", "*.jpeg"]:
+            images.extend(list(IMG_DIR.glob(ext)))
+            
         if images:
             chosen = random.choice(images)
             image_path = str(chosen)
+            print(f"【Debug】画像を選択しました: {image_path}")
             image_context = describe_image(image_path)
+        else:
+            print("【Debug】BOTimgディレクトリに画像が見つかりません。")
 
     log_text = generate_pokinu_log(weekday, image_context)
 
+    # 宣伝URLの付与
     if weekday == 6 or weekday == 2:
         final_text = f"{log_text}\n\n{PROMO_PHRASE}\n{RELEASE_LINK_URL}"
     else:
         final_text = log_text
 
+    # 投稿処理
+    print("【Debug】Xクライアントを初期化中...")
     client = create_client_v2()
     media_ids = None
+    
     if image_path:
         try:
+            print(f"【Debug】画像をアップロード中...")
             api = create_api_v1()
             media = api.media_upload(image_path)
             media_ids = [media.media_id]
-        except: pass
+            print(f"【Debug】メディアアップロード成功 ID: {media_ids}")
+        except Exception as e:
+            print(f"【Error】画像アップロード失敗: {e}")
 
     try:
+        print("【Debug】ツイートを送信中...")
         client.create_tweet(text=final_text[:280], media_ids=media_ids)
-        print(f"【Success】{now}: 1の世界への歩み寄り完了。")
+        print(f"【Success】{now}: 1の世界への同期完了。")
     except Exception as e:
-        print(f"【Error】: {e}")
+        print(f"【Error】ツイート送信失敗: {e}")
+        print("※403エラーが出る場合は、X Developer PortalでAppの権限を'Read and Write'に設定し、Tokenを再発行してください。")
 
 if __name__ == "__main__":
     run_once()
