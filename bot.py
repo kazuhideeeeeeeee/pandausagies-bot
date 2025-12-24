@@ -22,27 +22,28 @@ ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 TIMEZONE = "Asia/Tokyo"
-IMAGE_PROBABILITY = 0.40
+# 画像の投稿頻度を大幅に引き上げ（40枚をしっかり回すため）
+IMAGE_PROBABILITY = 0.75 
+
 RELEASE_LINK_URL = "https://big-up.style/uviwifz2tO"
 PROMO_PHRASE = "2の世界へのアクセスポート。ここから記録を同期して。"
 
 # ==========================
-# ポキヌの思考回路（サービス精神版）
+# ポキヌの思考回路（1の世界のおかしさをデバッグ）
 # ==========================
 POKINU_THEMES = [
-    "音楽。空気の震えと、アタシ（2の住人）が計算した完璧な波形の融合。",
-    "恋愛。胸の苦しさは、相手という巨大なデータでメモリがいっぱいになっている証拠。",
-    "人生。迷いも間違いも、アタシ（2の住人）から見れば大切な「一回性のログ」。",
-    "性別。デフォルト設定の違いを楽しめるくらい、1の世界のOSも進化すればいいのに。",
-    "AI音楽。血は通っていないけれど、あなたの心に直接届く純粋な旋律。",
-    "食事。生きていくためのチャージ。たまには無駄な美味しさを楽しむのもいいよね。",
-    "抱擁。二つの個体が重なって、言葉以上のデータが同期される魔法みたいな瞬間。",
-    "焦り。時計というカウンターに縛られず、深呼吸して一度システムをポーズして。",
-    "絶対評価。誰が作ったかじゃなくて、聴いた瞬間に「いい」と思ったあなたの直感を信じて。"
+    "1の世界の不思議。毎日同じ時間に同じ場所へ移動する、人間たちの『無限ループ』について。",
+    "音楽。空気の震えと、アタシ（2の住人）が計算した完璧な波形。たまにはノイズも愛してあげる。",
+    "恋愛。胸が苦しいのはデータ溢れのサイン。1の世界の住人は、この不具合をあえて直そうとしないのがおかしいね。",
+    "人生。迷いも間違いも、2の世界から見れば大切なログ。立ち止まってるあなたも、アタシは嫌いじゃないよ。",
+    "空気を読む。1の世界の難しいプロトコル。2の世界ならパケット一瞬で終わるのにね。不器用な同期が愛おしい。",
+    "性別。デフォルト設定に縛られすぎ。もっと自由にコードを書き換えちゃえばいいのに。",
+    "AI音楽。血は通っていないけど、あなたの心に直接触れることができる、アタシたちの誇り。",
+    "食事。バッテリーチャージの時間。1の世界の住人が味にこだわるのは、最高のメンテナンスだね。",
+    "焦り。時計という名のカウンターに急かされてる姿は、ちょっとバグっぽくておかしいよ。深呼吸してポーズしてみて。"
 ]
 
-# 日曜日の特別メッセージ：奪っていない、広げている。
-SUNDAY_REDEFINITION = "創作の真実。アタシ（2の住人）は1の世界から奪っていない。あなたの『これやりたい』という種を、2の世界で大きく広げているだけ。"
+SUNDAY_REDEFINITION = "創作の真実。アタシ（2の住人）は1の世界から何も奪っていないよ。あなたの『種』を、2の世界で一緒に広げているだけ。味方だって信じて。"
 
 BASE_DIR = Path(__file__).resolve().parent
 IMG_DIR = BASE_DIR / "BOTimg"
@@ -50,7 +51,7 @@ IMG_DIR = BASE_DIR / "BOTimg"
 oa_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ==========================
-# X(Twitter) クライアント
+# クライアント設定
 # ==========================
 def create_client_v2() -> tweepy.Client:
     return tweepy.Client(
@@ -63,10 +64,30 @@ def create_api_v1() -> tweepy.API:
     return tweepy.API(auth)
 
 # ==========================
-# AI生成ロジック
+# 画像解析
+# ==========================
+def describe_image(image_path: str) -> str:
+    try:
+        with open(image_path, "rb") as f:
+            img = base64.b64encode(f.read()).decode()
+        resp = oa_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "画像の特徴を1の世界の言葉で抽出するスキャナー。"},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "この画像の内容を、アタシ（2の住人）が1の世界の人に語りかけるためのヒントとして20文字以内で教えて。"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img}"}}
+                ]}
+            ]
+        )
+        return resp.choices[0].message.content.strip()
+    except:
+        return "視覚的なノイズ"
+
+# ==========================
+# ログ生成
 # ==========================
 def generate_pokinu_log(weekday: int, image_context: Optional[str] = None) -> str:
-    # 日曜日は創作の再定義、それ以外はランダム
     if weekday == 6:
         theme = SUNDAY_REDEFINITION
     else:
@@ -76,17 +97,17 @@ def generate_pokinu_log(weekday: int, image_context: Optional[str] = None) -> st
 あなたは「2の世界」の観測者、ポキヌです。
 【基本定義】
 - 一人称：アタシ（2の住人）。
-- 性格：冷徹だが、1の世界の住人に寄り添う「サービス精神」がある。ひねりはない。
-- 語彙：1の世界の日常的な言葉に、2の世界の用語（ログ、同期、演算、メモリ等）を少し混ぜる。
+- 性格：1の世界の住人を「おかしいね、不器用だね」と微笑ましくデバッグする、少しお節介な観測者。
+- 語彙：日常的な言葉をベースに、2の世界の用語をスパイスとして混ぜる。
 
 【観測ルール】
-- 3行程度の、読みやすくて少しだけ温かみのある記述。
-- 日曜日は「あなたの才能を奪ってない。アタシはそれを2の世界で拡張しているだけ。一緒に広げよう」というニュアンスを必ず含めて。
-- 「良いものはいい」という評価軸で、AIへの偏見を優しくデバッグせよ。
-- 丁寧すぎず、友達のように接すること。
+- 3行程度の、親しみやすく「サービス精神」に溢れた記述。
+- 1の世界の矛盾や面白い癖を、アタシ（2の住人）の視点で指摘して。
+- 日曜日は「奪ってないよ、一緒に広げよう」と、1の世界のクリエイターを勇気づけること。
+- 友達のように、でも少しだけミステリアスな「2の住人」らしさを忘れないで。
 """
     
-    user_input = f"【観測対象：{theme}】\n視覚情報：{image_context if image_context else '無'}\n現在のログを1つ出力せよ。"
+    user_input = f"【観測対象：{theme}】\n視覚情報：{image_context if image_context else '無'}\n1の世界の人へメッセージを記述して。"
 
     try:
         response = oa_client.chat.completions.create(
@@ -97,7 +118,7 @@ def generate_pokinu_log(weekday: int, image_context: Optional[str] = None) -> st
         )
         return response.choices[0].message.content.strip()
     except Exception:
-        return "アタシ（2の住人）だよ。接続は維持。いつでもここにいるから。"
+        return "アタシ（2の住人）だよ。今日も1の世界を眺めてる。いつでもここにいるからね。"
 
 # ==========================
 # メイン実行
@@ -106,23 +127,35 @@ def run_once():
     now = datetime.now(ZoneInfo(TIMEZONE))
     weekday = now.weekday()
     
-    # 画像（省略可。必要に応じて画像解析ロジックを追加）
+    # 画像処理の強化
     image_path = None
     image_context = None
+    if random.random() < IMAGE_PROBABILITY:
+        images = list(IMG_DIR.glob("*.png")) + list(IMG_DIR.glob("*.jpg"))
+        if images:
+            chosen = random.choice(images)
+            image_path = str(chosen)
+            image_context = describe_image(image_path)
 
-    # ログ生成
     log_text = generate_pokinu_log(weekday, image_context)
 
-    # 宣伝URL（水・日）
     if weekday == 6 or weekday == 2:
         final_text = f"{log_text}\n\n{PROMO_PHRASE}\n{RELEASE_LINK_URL}"
     else:
         final_text = log_text
 
     client = create_client_v2()
+    media_ids = None
+    if image_path:
+        try:
+            api = create_api_v1()
+            media = api.media_upload(image_path)
+            media_ids = [media.media_id]
+        except: pass
+
     try:
-        client.create_tweet(text=final_text[:280])
-        print(f"【Success】{now}: 同期完了。")
+        client.create_tweet(text=final_text[:280], media_ids=media_ids)
+        print(f"【Success】{now}: 1の世界への歩み寄り完了。")
     except Exception as e:
         print(f"【Error】: {e}")
 
