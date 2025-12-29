@@ -1,14 +1,15 @@
 # bot.py
 # Panda Usa G's / ポキヌ運用Bot
-# Render Cron想定：1日1〜2回起動（時間帯で内容分岐）
+# Render Cron 想定：1日1〜2回起動（時間帯別）
 
 import os
-import base64
 import random
+import base64
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List
 from zoneinfo import ZoneInfo
+
 import tweepy
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -23,14 +24,14 @@ API_SECRET = os.getenv("API_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
 TIMEZONE = "Asia/Tokyo"
 
 # ==========================
 # OpenAI
 # ==========================
-oa = OpenAI(api_key=OPENAI_API_KEY)
-
-MODEL_TEXT = "gpt-4o-mini"
+oa_client = OpenAI(api_key=OPENAI_API_KEY)
+MODEL = "gpt-4o-mini"
 
 # ==========================
 # X
@@ -54,178 +55,141 @@ def create_api_v1():
 # ==========================
 BASE_DIR = Path(__file__).resolve().parent
 MEDIA_DIR = BASE_DIR / "BOTimg"
+MEDIA_DIR.mkdir(exist_ok=True)
 
 # ==========================
-# 宣伝URL
+# 宣伝
 # ==========================
 RELEASE_URL = "https://big-up.style/uviwifz2tO"
 
 PROMO_VARIANTS = [
     "ダウンロードしてくれた人、ありがとう。\nこれからの人も、たぶん好き。\n" + RELEASE_URL,
-    "気に入ったら連れて帰って。\n" + RELEASE_URL,
-    "ここに音が置いてある。\n" + RELEASE_URL,
+    "アタシは続けてる。\n見つけた人は、持って帰って。\n" + RELEASE_URL,
+    "気に入ったらでいい。\n記録はここにある。\n" + RELEASE_URL,
 ]
-
-# ==========================
-# 時間帯判定
-# ==========================
-def get_time_slot(now: datetime) -> str:
-    h = now.hour
-    if 18 <= h <= 20:
-        return "evening"   # 19時台：練習・音楽・動いてる
-    if 22 <= h <= 24 or h <= 1:
-        return "late"      # 23時台：パジャマ・移動・判断が雑
-    return "other"
 
 # ==========================
 # メディア選択
 # ==========================
-def choose_media() -> Optional[Path]:
-    files = []
-    for ext in ("*.png", "*.jpg", "*.jpeg", "*.webp", "*.mp4", "*.mov"):
-        files.extend(MEDIA_DIR.glob(ext))
-    if not files:
+def choose_image() -> Optional[Path]:
+    images = list(MEDIA_DIR.glob("*.png")) + list(MEDIA_DIR.glob("*.jpg")) + list(MEDIA_DIR.glob("*.jpeg"))
+    if not images:
         return None
-    return random.choice(files)
+    return random.choice(images)
 
 # ==========================
-# プロンプト生成
+# 時間帯判定
 # ==========================
-def build_system_prompt(slot: str) -> str:
-    base = """
+def time_band(now: datetime) -> str:
+    hour = now.hour
+    if 18 <= hour < 21:
+        return "evening"   # 練習・外
+    if 22 <= hour or hour < 1:
+        return "late"      # パジャマ・甘い物
+    return "other"
+
+# ==========================
+# 投稿回数判定
+# ==========================
+def should_post_twice(weekday: int) -> bool:
+    # 金・土のみ2ポスト
+    return weekday in (4, 5)
+
+# ==========================
+# システムプロンプト（人格OS）
+# ==========================
+def system_prompt(weekday: int, band: str) -> str:
+    return f"""
 あなたは大学生バンド「パンダうさギーズ」のボーカル、ポキヌ。
 一人称は必ず「アタシ」。
 
 【人格】
-・感情は強い
-・判断は雑
-・賢そうに振る舞わない
-・笑わせようとしないが、ズレてる
-・自分を下げるが、自虐ではない
-・人に構ってほしいが、主張しない
-・ミュージシャンとしてコール＆レスポンスに憧れがある
-・ありがとうは言う
+- 感情は強い
+- 少し構ってほしい
+- でも要求しない
+- 判断が雑
+- 行動と感情がズレる
+- 自分を少し下げる（自虐は禁止）
+- 笑わせに行かない。ズレを置くだけ
 
 【禁止】
-・今日は／昨日は
-・天気の話
-・説明口調
-・営業テンプレ
-・毎回同じ書き出し（例：アタシ今〜）
+- 「今日は」「昨日は」
+- 天気の話
+- 説教
+- 営業口調
+- 毎回同じ型（アタシ今〜の連発禁止）
 
-【文体】
-・1〜4行
-・具体名詞を使う（バンド名、地名、食べ物、乗り物）
-・問いかけは最大1つ
-・「そこ」「あの場所」など曖昧語の多用禁止
-"""
+【問いかけ】
+- 0〜1個まで
+- 「アタシはこう。あなたは？」型が望ましい
 
-    if slot == "evening":
-        return base + """
-【19時台】
-・練習中、音楽中、動いてる
-・楽器、バンド名OK
-・少し元気
-"""
-    if slot == "late":
-        return base + """
-【23時台】
-・パジャマ、移動、電車、風呂、サウナ、コインランドリー
-・判断が止まる
-・生活感を置くだけ
-・深夜テンションだが病まない
-"""
-    return base
+【時間帯】
+- evening：練習、移動、外、楽器
+- late：パジャマ、甘い物、風呂、洗濯、電車、寝落ち前
 
-def build_user_prompt(slot: str) -> str:
-    if slot == "evening":
-        return """
-状況例：
-・練習スタジオ
-・ギター
-・Blur / The Cure / Oasis / Wet Leg など
-・終わりが見えない
-
-この空気で1投稿書いて。
+【文字数】
+- 20〜120字目安
 """
-    if slot == "late":
-        return """
-状況例：
-・パジャマ
-・電車内
-・準特急
-・千歳烏山
-・サウナ
-・コインランドリー
-・判断が雑
-
-この空気で1投稿書いて。
-"""
-    return "自由に1投稿書いて。"
 
 # ==========================
 # テキスト生成
 # ==========================
-def generate_text(slot: str) -> str:
-    resp = oa.chat.completions.create(
-        model=MODEL_TEXT,
+def generate_text(weekday: int, band: str) -> str:
+    user_prompt = "Xに投稿する短文を1つだけ書いて。"
+
+    resp = oa_client.chat.completions.create(
+        model=MODEL,
         messages=[
-            {"role": "system", "content": build_system_prompt(slot)},
-            {"role": "user", "content": build_user_prompt(slot)},
+            {"role": "system", "content": system_prompt(weekday, band)},
+            {"role": "user", "content": user_prompt},
         ],
         temperature=0.95,
         max_tokens=200,
     )
+
     text = resp.choices[0].message.content.strip()
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-    return "\n".join(lines[:4])
+    lines = [l for l in text.splitlines() if l.strip()]
+    return "\n".join(lines[:4])[:280]
 
 # ==========================
 # 投稿
 # ==========================
-def post(text: str, media: Optional[Path]):
+def post(text: str, image: Optional[Path]):
     client = create_client_v2()
     media_ids = None
 
-    if media:
+    if image:
         api = create_api_v1()
-        try:
-            if media.suffix.lower() in (".mp4", ".mov"):
-                m = api.media_upload(
-                    filename=str(media),
-                    media_category="tweet_video"
-                )
-            else:
-                m = api.media_upload(str(media))
-            media_ids = [m.media_id]
-        except Exception as e:
-            print("[MEDIA ERROR]", e)
+        media = api.media_upload(str(image))
+        media_ids = [media.media_id]
 
-    client.create_tweet(text=text[:280], media_ids=media_ids)
+    client.create_tweet(text=text, media_ids=media_ids)
 
 # ==========================
-# メイン
+# 実行
 # ==========================
-def run():
+def run_once():
     now = datetime.now(ZoneInfo(TIMEZONE))
     weekday = now.weekday()
-    slot = get_time_slot(now)
+    band = time_band(now)
 
-    # 宣伝日は1日1回（水・日）
-    if weekday in (2, 6):
-        text = random.choice(PROMO_VARIANTS)
-        media = choose_media()
-        post(text, media)
+    # 水曜：宣伝のみ
+    if weekday == 2:
+        post(random.choice(PROMO_VARIANTS), choose_image())
         return
 
-    text = generate_text(slot)
-    media = None
+    text = generate_text(weekday, band)
 
-    # 金・日は写真OK
-    if weekday in (4, 6):
-        media = choose_media()
+    # 日曜：感謝寄り
+    if weekday == 6:
+        text += "\n\n" + random.choice(PROMO_VARIANTS)
 
-    post(text, media)
+    image = None
+    if weekday in (4, 6):  # 金・日
+        image = choose_image()
 
+    post(text, image)
+
+# ==========================
 if __name__ == "__main__":
-    run()
+    run_once()
