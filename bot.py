@@ -1,24 +1,25 @@
 # bot.py
 # Panda Usa G's / ポキヌ運用Bot
-# Render Cron 想定：1日1〜2回起動（時間帯別）
+# Render Cron 想定：起動→1回投稿→終了
 
 import os
-import random
 import base64
+import random
+from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List
-from zoneinfo import ZoneInfo
+from typing import Optional, List, Dict
 
+from zoneinfo import ZoneInfo
 import tweepy
 from openai import OpenAI
 from dotenv import load_dotenv
 
-load_dotenv()
-
 # ==========================
 # 環境変数
 # ==========================
+load_dotenv()
+
 API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
@@ -31,12 +32,13 @@ TIMEZONE = "Asia/Tokyo"
 # OpenAI
 # ==========================
 oa_client = OpenAI(api_key=OPENAI_API_KEY)
-MODEL = "gpt-4o-mini"
+MODEL_TEXT = "gpt-4o-mini"
+MODEL_VISION = "gpt-4o-mini"
 
 # ==========================
-# X
+# X (Twitter)
 # ==========================
-def create_client_v2():
+def create_client_v2() -> tweepy.Client:
     return tweepy.Client(
         consumer_key=API_KEY,
         consumer_secret=API_SECRET,
@@ -44,9 +46,10 @@ def create_client_v2():
         access_token_secret=ACCESS_TOKEN_SECRET,
     )
 
-def create_api_v1():
+def create_api_v1() -> tweepy.API:
     auth = tweepy.OAuth1UserHandler(
-        API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET
+        API_KEY, API_SECRET,
+        ACCESS_TOKEN, ACCESS_TOKEN_SECRET
     )
     return tweepy.API(auth)
 
@@ -58,138 +61,186 @@ MEDIA_DIR = BASE_DIR / "BOTimg"
 MEDIA_DIR.mkdir(exist_ok=True)
 
 # ==========================
-# 宣伝
+# 曜日ルール
 # ==========================
-RELEASE_URL = "https://big-up.style/uviwifz2tO"
+WEEKDAY_RULES = {
+    0: {"max_chars": 120, "attach_media": False},
+    1: {"max_chars": 100, "attach_media": False},
+    2: {"max_chars": 180, "attach_media": True},   # 水曜：宣伝日
+    3: {"max_chars": 20,  "attach_media": False},
+    4: {"max_chars": 140, "attach_media": True},
+    5: {"max_chars": 140, "attach_media": False},
+    6: {"max_chars": 180, "attach_media": True},
+}
 
-PROMO_VARIANTS = [
-    "ダウンロードしてくれた人、ありがとう。\nこれからの人も、たぶん好き。\n" + RELEASE_URL,
-    "アタシは続けてる。\n見つけた人は、持って帰って。\n" + RELEASE_URL,
-    "気に入ったらでいい。\n記録はここにある。\n" + RELEASE_URL,
-]
+RELEASE_LINK_URL = "https://big-up.style/uviwifz2tO"
+
+WED_PROMO_TEXT = (
+    "1の世界の民よ！\n"
+    "パンダうさギーズ絶対聴いてね！\n"
+    f"{RELEASE_LINK_URL}"
+)
+
+SUN_THANKS_TEXT = (
+    "ダウンロードしてくれた人、ありがとう。\n"
+    "これからの人も、たぶん好き。\n"
+    f"{RELEASE_LINK_URL}"
+)
 
 # ==========================
 # メディア選択
 # ==========================
-def choose_image() -> Optional[Path]:
-    images = list(MEDIA_DIR.glob("*.png")) + list(MEDIA_DIR.glob("*.jpg")) + list(MEDIA_DIR.glob("*.jpeg"))
-    if not images:
+def list_media_files() -> List[Path]:
+    files = []
+    for ext in ("*.png", "*.jpg", "*.jpeg", "*.webp", "*.mp4", "*.mov"):
+        files.extend(MEDIA_DIR.glob(ext))
+    return files
+
+def choose_media(weekday: int) -> Optional[Path]:
+    rule = WEEKDAY_RULES[weekday]
+    if not rule["attach_media"]:
         return None
-    return random.choice(images)
+    files = list_media_files()
+    if not files:
+        return None
+    return random.choice(files)
 
 # ==========================
-# 時間帯判定
+# 行事判定（★ここが今回の核心）
 # ==========================
-def time_band(now: datetime) -> str:
-    hour = now.hour
-    if 18 <= hour < 21:
-        return "evening"   # 練習・外
-    if 22 <= hour or hour < 1:
-        return "late"      # パジャマ・甘い物
-    return "other"
+def detect_event(media_path: Optional[Path]) -> Optional[str]:
+    if not media_path:
+        return None
+
+    name = media_path.name.lower()
+
+    # 正月用画像
+    if name == "botimg51.png":
+        return "newyear"
+
+    return None
 
 # ==========================
-# 投稿回数判定
+# システムプロンプト
 # ==========================
-def should_post_twice(weekday: int) -> bool:
-    # 金・土のみ2ポスト
-    return weekday in (4, 5)
+def build_system_prompt(event: Optional[str], max_chars: int) -> str:
+    event_rule = ""
+    if event == "newyear":
+        event_rule = """
+【行事ルール：正月】
+- 「正月」という単語は1回まで使用可
+- 「今日は」「昨日」「今年」「来年」「あけまして」禁止
+- 抱負・振り返り・まとめ禁止
+- 問いかけ禁止
+- 結果・結論を言わない
+"""
 
-# ==========================
-# システムプロンプト（人格OS）
-# ==========================
-def system_prompt(weekday: int, band: str) -> str:
     return f"""
 あなたは大学生バンド「パンダうさギーズ」のボーカル、ポキヌ。
 一人称は必ず「アタシ」。
 
-【人格】
-- 感情は強い
-- 少し構ってほしい
-- でも要求しない
-- 判断が雑
-- 行動と感情がズレる
-- 自分を少し下げる（自虐は禁止）
-- 笑わせに行かない。ズレを置くだけ
+【文体】
+- 感情はあるが、説明しない
+- 笑わせようとしないが、ズレは残す
+- 自虐は禁止（下げるのはOK）
+- 問いかけは基本しない
+- 結果・教訓を言わない
 
 【禁止】
-- 「今日は」「昨日は」
-- 天気の話
-- 説教
-- 営業口調
-- 毎回同じ型（アタシ今〜の連発禁止）
+- 「今日は」「昨日」
+- 天気
+- SNSテンプレ
+- 連続した同型構文
 
-【問いかけ】
-- 0〜1個まで
-- 「アタシはこう。あなたは？」型が望ましい
+{event_rule}
 
-【時間帯】
-- evening：練習、移動、外、楽器
-- late：パジャマ、甘い物、風呂、洗濯、電車、寝落ち前
-
-【文字数】
-- 20〜120字目安
-"""
+最大文字数目安：{max_chars}
+""".strip()
 
 # ==========================
 # テキスト生成
 # ==========================
-def generate_text(weekday: int, band: str) -> str:
-    user_prompt = "Xに投稿する短文を1つだけ書いて。"
+def generate_text(
+    weekday: int,
+    media_path: Optional[Path],
+) -> str:
 
-    resp = oa_client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt(weekday, band)},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.95,
-        max_tokens=200,
-    )
+    # 固定日
+    if weekday == 2:
+        return WED_PROMO_TEXT[:280]
+    if weekday == 6:
+        return SUN_THANKS_TEXT[:280]
 
-    text = resp.choices[0].message.content.strip()
-    lines = [l for l in text.splitlines() if l.strip()]
-    return "\n".join(lines[:4])[:280]
+    rule = WEEKDAY_RULES[weekday]
+    max_chars = rule["max_chars"]
+
+    event = detect_event(media_path)
+    system_prompt = build_system_prompt(event, max_chars)
+
+    user_prompt = """
+短文で1本だけ書く。
+説明しない。
+情景は置く。
+結論は言わない。
+""".strip()
+
+    try:
+        resp = oa_client.chat.completions.create(
+            model=MODEL_TEXT,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.95,
+            max_tokens=200,
+        )
+        text = resp.choices[0].message.content.strip()
+    except Exception:
+        text = "アタシは黙ってる。"
+
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    text = "\n".join(lines)
+
+    if len(text) > max_chars:
+        text = text[:max_chars].rstrip()
+
+    return text[:280]
 
 # ==========================
 # 投稿
 # ==========================
-def post(text: str, image: Optional[Path]):
+def upload_media(api: tweepy.API, path: Path) -> Optional[List[int]]:
+    try:
+        media = api.media_upload(str(path))
+        return [media.media_id]
+    except Exception as e:
+        print("[MEDIA ERROR]", e)
+        return None
+
+def post_to_x(text: str, media_path: Optional[Path]):
     client = create_client_v2()
     media_ids = None
 
-    if image:
+    if media_path:
         api = create_api_v1()
-        media = api.media_upload(str(image))
-        media_ids = [media.media_id]
+        media_ids = upload_media(api, media_path)
 
     client.create_tweet(text=text, media_ids=media_ids)
 
 # ==========================
-# 実行
+# メイン
 # ==========================
 def run_once():
     now = datetime.now(ZoneInfo(TIMEZONE))
     weekday = now.weekday()
-    band = time_band(now)
 
-    # 水曜：宣伝のみ
-    if weekday == 2:
-        post(random.choice(PROMO_VARIANTS), choose_image())
-        return
+    media_path = choose_media(weekday)
+    text = generate_text(weekday, media_path)
 
-    text = generate_text(weekday, band)
+    print("[DEBUG] media:", media_path.name if media_path else "none")
+    print("[DEBUG] text:\n", text)
 
-    # 日曜：感謝寄り
-    if weekday == 6:
-        text += "\n\n" + random.choice(PROMO_VARIANTS)
+    post_to_x(text, media_path)
 
-    image = None
-    if weekday in (4, 6):  # 金・日
-        image = choose_image()
-
-    post(text, image)
-
-# ==========================
 if __name__ == "__main__":
     run_once()
