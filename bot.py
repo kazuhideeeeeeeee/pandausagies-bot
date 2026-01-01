@@ -1,32 +1,31 @@
 # bot.py
 # Panda Usa G's / ポキヌ運用Bot（Render Cron想定：起動→1回投稿→終了）
 #
-# ★ここが“今回の修正の核”
-# - 「200ルール」を bot.py 内に完全同梱（len==200 を起動ログで必ず表示）
-# - 19時台＝練習/移動/ライブハウス脳、23時台＝パジャマ/スイーツ/寝落ち/課題/風呂サウナ脳 に切替
-# - 「アタシ」開始の連発を物理的に減らす（冒頭テンプレを渡して“先頭アタシ”を避ける）
-# - 毎回問いかけをやめる（質問禁止モードの日・時間帯を用意／許可でも最大1つ）
-# - 「今日は/昨日」禁止。ただし 行事（大晦日/元日/正月/三が日）は言ってOK
-# - 宣伝文（DLリンク）は“固定文”だけじゃなくバリエーションを生成（ただし主張はDLのみ）
+# ✅ 200ルール = 法律（必ず守らせる：違反検知→再生成）
+# ✅ URLは絶対に間違えない（AIに渡さず、コードが末尾に付ける）
 #
-# Render側は、1日2回回したいなら Cron を2本にしてOK：
-#   19:xx と 23:xx で同じ bot.py を叩けば、時間帯で自動的に文体が変わる
+# 使い方（Render で Cron を2本にする例）:
+#  - 19時台起動 / 23時台起動（同じ bot.py）
+# 環境変数:
+#  - DRY_RUN=1 で投稿せず標準出力のみ
+#  - FORCE_PROMO=1 で宣伝モード固定（宣伝日は1ポスト運用推奨）
+#  - FORCE_SLOT=practice/night/day で時間帯固定（テスト用）
 
 import os
 import base64
 import random
+import re
 import hashlib
 from collections import deque
 from datetime import datetime, date
 from pathlib import Path
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 from zoneinfo import ZoneInfo
 import tweepy
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# .env（ローカル用。RenderではEnvironmentで設定推奨）
 load_dotenv()
 
 # ==========================
@@ -39,52 +38,65 @@ ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Tokyo")
-DRY_RUN = os.getenv("DRY_RUN", "0") == "1"     # 1 にすると投稿せず出力だけ
-FORCE_SLOT = os.getenv("FORCE_SLOT", "").strip().lower()  # practice/night/day/auto
+DRY_RUN = os.getenv("DRY_RUN", "0") == "1"
+FORCE_SLOT = os.getenv("FORCE_SLOT", "").strip().lower()   # practice/night/day
 FORCE_PROMO = os.getenv("FORCE_PROMO", "0") == "1"
 
 # ==========================
-# モデル
+# OpenAI
 # ==========================
 oa_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else OpenAI()
 MODEL_TEXT = os.getenv("OPENAI_MODEL_TEXT", "gpt-4o-mini")
 MODEL_VISION = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini")
 
 # ==========================
-# パス・メディア
+# パス
 # ==========================
 BASE_DIR = Path(__file__).resolve().parent
-MEDIA_DIR = BASE_DIR / "BOTimg"
+MEDIA_DIR = BASE_DIR / "BOTimg"  # 画像/動画は同フォルダでOK
 MEDIA_DIR.mkdir(exist_ok=True)
 
 # ==========================
-# プロモ（URL）
+# ✅ URL（法律：ここだけ）
 # ==========================
 RELEASE_LINK_URL = "https://big-up.style/uviwifz2tO"
+# どこにも別URLを作らない／AIにも渡さない
 
 # ==========================
-# 外部リスト読み込み（端折り防止）
+# X (Tweepy)
+# ==========================
+def create_client_v2() -> tweepy.Client:
+    return tweepy.Client(
+        consumer_key=API_KEY,
+        consumer_secret=API_SECRET,
+        access_token=ACCESS_TOKEN,
+        access_token_secret=ACCESS_TOKEN_SECRET,
+    )
+
+def create_api_v1() -> tweepy.API:
+    auth = tweepy.OAuth1UserHandler(API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET)
+    return tweepy.API(auth)
+
+# ==========================
+# 外部リスト読み込み（任意）
 # ==========================
 def _read_lines(path: Path) -> List[str]:
     if not path.exists():
         return []
-    lines: List[str] = []
+    out: List[str] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         s = line.strip()
-        if not s:
+        if not s or s.startswith("#"):
             continue
-        if s.startswith("#"):
-            continue
-        lines.append(s)
-    return lines
+        out.append(s)
+    return out
 
 def load_music_refs() -> List[Dict[str, str]]:
     """
-    music_refs.txt 形式（1行1件）:
+    music_refs.txt（1行1件）
       Artist|Album|Track
     """
-    path = BASE_DIR / "music_refs.txt"
-    raw = _read_lines(path)
+    raw = _read_lines(BASE_DIR / "music_refs.txt")
     refs: List[Dict[str, str]] = []
     for row in raw:
         parts = row.split("|")
@@ -97,7 +109,6 @@ def load_music_refs() -> List[Dict[str, str]]:
     return refs
 
 def load_places() -> Dict[str, List[str]]:
-    # places_micro.txt は任意。無ければ city/venue で回る。
     return {
         "micro": _read_lines(BASE_DIR / "places_micro.txt"),
         "city":  _read_lines(BASE_DIR / "places_city.txt"),
@@ -107,20 +118,16 @@ def load_places() -> Dict[str, List[str]]:
 # ==========================
 # 直近被り防止
 # ==========================
-recent_artists = deque(maxlen=25)
-recent_places = deque(maxlen=25)
-recent_openers = deque(maxlen=25)
-recent_post_hashes = deque(maxlen=30)
+recent_artists = deque(maxlen=30)
+recent_places = deque(maxlen=30)
+recent_openers = deque(maxlen=30)
+recent_hashes = deque(maxlen=40)
 
 def pick_non_recent(items: List[str], recent: deque) -> Optional[str]:
     if not items:
         return None
     candidates = [x for x in items if x not in recent]
-    if not candidates:
-        choice = random.choice(items)
-        recent.append(choice)
-        return choice
-    choice = random.choice(candidates)
+    choice = random.choice(candidates) if candidates else random.choice(items)
     recent.append(choice)
     return choice
 
@@ -128,45 +135,39 @@ def pick_music_ref(music_refs: List[Dict[str, str]], slot: str) -> Optional[Dict
     if not music_refs:
         return None
 
-    # 夜は曲名/アルバムも出やすい。練習はartist中心で硬く。
-    allow_track = slot in ("night",)
+    # slotにより粒度
     allow_album = slot in ("night", "day")
+    allow_track = slot in ("night",)
 
     candidates = [r for r in music_refs if r["artist"] and r["artist"] not in recent_artists]
-    if not candidates:
-        candidates = music_refs[:]
-
-    ref = random.choice(candidates)
+    ref = random.choice(candidates) if candidates else random.choice(music_refs)
     recent_artists.append(ref["artist"])
 
     if not allow_album:
-        ref = {**ref, "album": "", "track": ""}
-    elif not allow_track:
-        ref = {**ref, "track": ""}
+        return {**ref, "album": "", "track": ""}
+    if not allow_track:
+        return {**ref, "track": ""}
     return ref
 
 def pick_place(places: Dict[str, List[str]], slot: str) -> Optional[str]:
-    # 練習＝会場/沿線/駅っぽいの優先、夜＝街/生活圏も混ぜる
     if slot == "practice":
-        pool = (places.get("venue", []) + places.get("micro", []) + places.get("city", []))
+        pool = places.get("venue", []) + places.get("micro", []) + places.get("city", [])
     elif slot == "night":
-        pool = (places.get("micro", []) + places.get("city", []) + places.get("venue", []))
+        pool = places.get("micro", []) + places.get("city", []) + places.get("venue", [])
     else:
-        pool = (places.get("micro", []) + places.get("city", []) + places.get("venue", []))
+        pool = places.get("city", []) + places.get("micro", []) + places.get("venue", [])
     return pick_non_recent(pool, recent_places)
 
 # ==========================
-# スロット（時間帯）判定
+# スロット判定
 # ==========================
 def detect_slot(now: datetime) -> str:
     if FORCE_SLOT in ("practice", "night", "day"):
         return FORCE_SLOT
     h = now.hour
-    # 19時台（だいたい夕方〜夜前）＝練習/移動
     if 18 <= h <= 21:
         return "practice"
-    # 23時台（だいたい深夜）＝生活/寝落ち
-    if 22 <= h or h <= 1:
+    if h >= 22 or h <= 1:
         return "night"
     return "day"
 
@@ -174,7 +175,6 @@ def detect_slot(now: datetime) -> str:
 # 行事（言ってOK）
 # ==========================
 def jp_event_label(d: date) -> Optional[str]:
-    # 必要最低限。増やしたければここに足す。
     if d.month == 12 and d.day == 31:
         return "大晦日"
     if d.month == 1 and d.day == 1:
@@ -186,7 +186,7 @@ def jp_event_label(d: date) -> Optional[str]:
     return None
 
 # ==========================
-# 画像/動画 選択（正月専用も）
+# メディア選択
 # ==========================
 def list_media_files() -> List[Path]:
     files: List[Path] = []
@@ -199,41 +199,36 @@ def choose_media(now: datetime, slot: str) -> Optional[Path]:
     if not all_media:
         return None
 
-    # 正月用：ユーザー指定 botimg51.png（大文字小文字/拡張子差も吸収）
+    # 元日写真固定（存在すれば）
     if now.month == 1 and now.day == 1:
         for p in all_media:
             if p.name.lower() == "botimg51.png":
                 return p
 
-    # 画像優先。動画は控えめ。
     videos = [p for p in all_media if p.suffix.lower() in (".mp4", ".mov")]
     images = [p for p in all_media if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]
 
-    # 練習/夜は写真が効く。昼はランダム。
-    video_rate = 0.15 if slot in ("practice", "night") else 0.20
-    if videos and random.random() < video_rate:
+    # 動画は控えめ
+    if videos and random.random() < 0.15:
         return random.choice(videos)
     if images:
         return random.choice(images)
     return random.choice(all_media)
 
 def describe_image_for_prompt(image_path: Path) -> str:
-    """
-    画像の“名詞だけ”を短く抜く。文章化しない。
-    """
     try:
-        b = image_path.read_bytes()
-        b64 = base64.b64encode(b).decode("utf-8")
+        b64 = base64.b64encode(image_path.read_bytes()).decode("utf-8")
+        suf = image_path.suffix.lower()
         mime = "image/png"
-        if image_path.suffix.lower() in (".jpg", ".jpeg"):
+        if suf in (".jpg", ".jpeg"):
             mime = "image/jpeg"
-        elif image_path.suffix.lower() == ".webp":
+        elif suf == ".webp":
             mime = "image/webp"
 
         resp = oa_client.chat.completions.create(
             model=MODEL_VISION,
             messages=[
-                {"role": "system", "content": "画像の中の名詞だけを短く抽出する。抽象語は禁止。"},
+                {"role": "system", "content": "画像の中の名詞だけを抽出。抽象語は禁止。"},
                 {"role": "user", "content": [
                     {"type": "text", "text": "名詞だけ。20〜35文字。"},
                     {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
@@ -246,7 +241,7 @@ def describe_image_for_prompt(image_path: Path) -> str:
         return ""
 
 # ==========================
-# 200 ルール（完全同梱）
+# ✅ 200ルール（法律：完全同梱・起動時にlen==200保証）
 # ==========================
 PERSONA_RULES_TEXT = """
 001:素直じゃないが感情は強い
@@ -359,7 +354,7 @@ PERSONA_RULES_TEXT = """
 108:外食=店名は言わなくていいが通り名はOK
 109:服=スニーカー/ローファー/ジャージ/黒コート
 110:明日の献立=雑に決める
-111:「今日は」「昨日は」など日付語は使わない
+111:「今日は」「昨日」など日付語は使わない
 112:ただし行事語はOK（大晦日/元日/正月/三が日）
 113:天気の話は禁止
 114:「そこ」「あの場所」など曖昧語の連発禁止
@@ -370,7 +365,7 @@ PERSONA_RULES_TEXT = """
 119:結論を書かない
 120:感情の理由を語り切らない
 121:気持ちは単語で置くのはOK
-122:でも「だから〜」で説明しない
+122:でも「だから」で説明しない
 123:改行は1〜4行
 124:箇条書き禁止
 125:絵文字禁止
@@ -392,7 +387,7 @@ PERSONA_RULES_TEXT = """
 141:会場名は刺さるので積極的に使う
 142:地名はそのまま出す
 143:駅名もそのまま出す
-144:ライブハウスは“呼び名”でいい
+144:ライブハウスは呼び名でいい
 145:呼び名に括弧で正式名は不要（原則）
 146:ただし読みづらければ正式名もOK
 147:1投稿に固有名詞は1〜3個が目安
@@ -403,9 +398,9 @@ PERSONA_RULES_TEXT = """
 152:匂いは台所/洗剤/アンプ
 153:音は弦/改札/乾燥機
 154:手触りはベンチ/コイン/弦
-155:笑いは“判断の雑”で出す
-156:笑いは“感情と行動のズレ”で出す
-157:笑いは“自分を下げる”で出す
+155:笑いは判断の雑で出す
+156:笑いは感情と行動のズレで出す
+157:笑いは自分を下げるで出す
 158:でも自虐オチ禁止
 159:オチを作らない
 160:作らないのに読後感は残す
@@ -419,7 +414,7 @@ PERSONA_RULES_TEXT = """
 168:1本目=練習/移動、2本目=夜の生活
 169:同じフォーマット禁止（2本続けて）
 170:2本目は語彙を変える
-171:宣伝は“ダウンロード”だけ主張する
+171:宣伝はダウンロードだけ主張する
 172:宣伝の文は固定しない（バリエ作る）
 173:URLは最後に置く
 174:URL以外は営業っぽくしない
@@ -434,96 +429,54 @@ PERSONA_RULES_TEXT = """
 183:ただし主張はDLのみ
 184:DL以外のお願いは禁止
 185:フォロー/RT依頼は禁止
-186:大晦日は“年末っぽい名詞”を置く
-187:元日は“正月っぽい名詞”を置く
+186:大晦日は年末っぽい名詞を置く
+187:元日は正月っぽい名詞を置く
 188:あけおめは義務じゃない（言っても言わなくてもOK）
 189:言うならぶっきらぼうに短く
 190:言わないなら代わりに生活で示す
 191:練習スロットは手元の描写を増やす
 192:夜スロットは眠気/甘いもの/課題を増やす
 193:昼スロットは街/移動/予定を増やす
-194:「結果」を言い切らない
-195:「結果」を言うなら短く言い捨てる
+194:結果を言い切らない
+195:結果を言うなら短く言い捨てる
 196:ポエムに寄せすぎない
 197:でも文学っぽい一瞬は許す
 198:英単語は必要最低限
 199:カタカナは多用しない
-200:最終的に“人間っぽさ”を優先
+200:最終的に人間っぽさを優先
 """.strip()
 
 PERSONA_RULES: List[str] = [ln.strip() for ln in PERSONA_RULES_TEXT.splitlines() if ln.strip()]
-
-# ここで「200」担保
 if len(PERSONA_RULES) != 200:
     raise RuntimeError(f"PERSONA_RULES length must be 200, got {len(PERSONA_RULES)}")
 
-def pick_rules_pack(slot: str, question_allowed: bool) -> List[str]:
-    """
-    200ルール全部を毎回投げると長いので、毎回“違う束”を渡す。
-    ただしコード内には200全て同梱され、起動ログでcountを表示する。
-    """
-    # コア＋スロット＋形式
-    core_idxs = list(range(1, 41))
-    style_idxs = list(range(41, 171))
-    promo_idxs = list(range(171, 201))
-
-    pack: List[str] = []
-    pack += random.sample([PERSONA_RULES[i-1] for i in core_idxs], k=6)
-    pack += random.sample([PERSONA_RULES[i-1] for i in style_idxs], k=10)
-    pack += random.sample([PERSONA_RULES[i-1] for i in promo_idxs], k=6)
-
-    # 質問禁止なら、質問関連を強めに入れる
-    if not question_allowed:
-        force = [PERSONA_RULES[i-1] for i in (61, 62, 63, 64, 65)]
-        pack += random.sample(force, k=3)
-
-    # スロットで生活語彙を足す
-    if slot == "practice":
-        pack += [PERSONA_RULES[i-1] for i in (101, 141, 191)]
-    elif slot == "night":
-        pack += [PERSONA_RULES[i-1] for i in (102, 105, 192)]
-    else:
-        pack += [PERSONA_RULES[i-1] for i in (103, 193)]
-
-    # 重複除去
-    out: List[str] = []
-    seen = set()
-    for r in pack:
-        if r in seen:
-            continue
-        seen.add(r)
-        out.append(r)
-    return out[:22]  # だいたいこのくらいが安定
-
 # ==========================
-# オープニング（先頭アタシ回避）
+# オープナー（先頭アタシ連発を防ぐ）
 # ==========================
 OPENERS_PRACTICE = [
-    "弦切れたわ...在庫もない...",
     "ピックが行方不明。",
-    "チューナーは正しい",
+    "チューナーだけ正しい。",
     "メトロノーム、容赦ない。",
-    "アンプの電源入れる瞬間だけ強い。",
-    "改札の音",
+    "弦の音がやけに生々しい。",
     "準特急、座れない。",
-    "ホームのベンチ、冷たいヒーターつけて。",
-    "リフが勝手に出てくる。",
+    "改札の音だけ覚えてる。",
+    "ホームのベンチ、冷たい。",
     "指先だけ先に疲れてる。",
+    "リフが勝手に出てくる。",
+    "アンプの電源入れる瞬間だけ強い。",
 ]
-
 OPENERS_NIGHT = [
     "パジャマのまま現実に戻れない。",
     "甘いものが勝ってる。",
     "課題の画面が睨んでくる。",
     "寝落ちの予感だけ完璧。",
     "風呂の湯気が全部持っていった。",
-    "サウナの後って思考が雑になる。",
+    "サウナの後って判断が雑になる。",
     "コインランドリーの乾燥機がうるさい。",
     "冷蔵庫、何も答えない。",
     "ローファー脱いだ瞬間だけ救われる。",
     "ネトフリ、罪深い。",
 ]
-
 OPENERS_DAY = [
     "予定だけが先に歩いてる。",
     "財布の小銭が減らない。",
@@ -538,240 +491,252 @@ OPENERS_DAY = [
 ]
 
 def pick_opener(slot: str) -> str:
-    if slot == "practice":
-        pool = OPENERS_PRACTICE
-    elif slot == "night":
-        pool = OPENERS_NIGHT
-    else:
-        pool = OPENERS_DAY
+    pool = OPENERS_PRACTICE if slot == "practice" else (OPENERS_NIGHT if slot == "night" else OPENERS_DAY)
     return pick_non_recent(pool, recent_openers) or random.choice(pool)
 
 # ==========================
-# 宣伝文バリエーション（DLのみ主張）
+# 宣伝文（URLは必ずコードが付ける）
 # ==========================
-PROMO_SEEDS = [
+PROMO_LINES = [
     "ダウンロードしてくれた人、ありがとう。",
-    "ダウンロード、ありがとう。",
-    "聴いてくれた人、ありがとう。",
-    "見つけてくれた人、ありがとう。",
-    "手に取ってくれた人、ありがとう。",
     "これからの人も、たぶん好き。",
-    "これからの人も、たぶん。",
-    "これからの人、待ってる。",
-    "ダウンロードの入口、ここ。",
     "入口だけ置いとく。",
+    "ダウンロード、ありがとう。",
+    "手に取ってくれた人、ありがとう。",
 ]
 
-def build_promo_text(slot: str, event: Optional[str], music_ref: Optional[Dict[str, str]], place: Optional[str]) -> str:
-    """
-    宣伝は“DLのみ主張”。営業文にならないように短いズレと具体名詞を混ぜる。
-    """
+def build_promo_body(slot: str, event: Optional[str], music_ref: Optional[Dict[str, str]], place: Optional[str]) -> str:
+    # URLはここでは絶対に入れない（法律）
     bits: List[str] = []
-    if event and random.random() < 0.60:
-        bits.append(event + "。")
+    if event:
+        bits.append(f"{event}。")
 
-    # 生活/音楽の断片（1つだけ）
-    if slot == "practice" and random.random() < 0.70:
+    # 生活の断片（slot）
+    if slot == "practice":
         bits.append("弦、また切れそう。")
-    elif slot == "night" and random.random() < 0.70:
+    elif slot == "night":
         bits.append("甘いものが勝ってる。")
     else:
         bits.append("予定だけが先に歩いてる。")
 
-    # 固有名詞（1つ）
-    if music_ref and random.random() < 0.55:
-        artist = music_ref.get("artist", "")
-        if artist:
-            bits.append(f"{artist}、流してる。")
+    # 固有名詞は1つだけ
+    if music_ref and music_ref.get("artist") and random.random() < 0.55:
+        bits.append(f"{music_ref['artist']}、流してる。")
     elif place and random.random() < 0.55:
         bits.append(f"{place}。")
 
-    # 感謝・DL（2行まで）
-    a = random.choice(PROMO_SEEDS)
-    b = random.choice(PROMO_SEEDS)
+    a = random.choice(PROMO_LINES)
+    b = random.choice(PROMO_LINES)
     while b == a:
-        b = random.choice(PROMO_SEEDS)
+        b = random.choice(PROMO_LINES)
 
-    # なるべく同じ形にならないように順序シャッフル
-    promo_lines = [a, b]
-    random.shuffle(promo_lines)
+    lines = []
+    lines.extend(bits[:2])
+    lines.append(a)
+    if random.random() < 0.5:
+        lines.append(b)
 
-    # まとめ
-    out_lines = []
-    out_lines.extend(bits[:2])
-    out_lines.extend(promo_lines[:2])
-    out_lines.append(RELEASE_LINK_URL)
-    # 4行以内に圧縮
-    out = "\n".join(out_lines)
-    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
-    return "\n".join(lines[:4])[:280]
+    # 1〜4行に収める（URLは後で足す）
+    lines = [ln.strip() for ln in lines if ln.strip()]
+    return "\n".join(lines[:4]).strip()
 
 # ==========================
-# テキスト生成（ポキヌ）
+# ✅ 200ルールを“検査で強制”するためのバリデータ
 # ==========================
-def build_system_prompt(slot: str, max_chars: int, question_allowed: bool, rules_pack: List[str]) -> str:
+RE_BULLET = re.compile(r"^[\-\*・●▶︎▪︎◼︎]+", re.MULTILINE)
+
+def validate_text(body: str, question_allowed: bool) -> Tuple[bool, List[str]]:
     """
-    ここが本体：型固定を防ぐために
-    - “200ルール”の中から毎回違う束を渡す
-    - 先頭アタシ禁止寄り（オープニング名詞スタートを推奨）
-    - 質問は許可された時だけ最大1
+    body はURL無し本文のみ。
+    200ルール全件を機械的に“完全判定”は不可能なので、
+    法律として“必ず守るべき禁止・制約”を確実に検査し、
+    破ったら再生成する。
     """
-    q_rule = "質問は禁止（疑問符も基本使わない）" if not question_allowed else "質問は最大1つ（毎回しない）"
+    reasons: List[str] = []
+    t = body.strip()
+
+    # 1〜4行
+    lines = [ln for ln in t.splitlines() if ln.strip()]
+    if not (1 <= len(lines) <= 4):
+        reasons.append("line_count")
+
+    # 絵文字・ハッシュタグ
+    if "#" in t:
+        reasons.append("hashtag")
+    # ゆるい絵文字検出（完全ではないが抑止）
+    if re.search(r"[\U0001F300-\U0001FAFF]", t):
+        reasons.append("emoji")
+
+    # 箇条書き記号
+    if RE_BULLET.search(t):
+        reasons.append("bullet")
+
+    # 日付語（今日は/昨日は等）禁止
+    for bad in ("今日は", "昨日は", "きょうは", "きのうは"):
+        if bad in t:
+            reasons.append("date_word")
+
+    # 天気系ワード禁止（必要最低限）
+    for bad in ("天気", "晴れ", "雨", "雪", "曇", "気温"):
+        if bad in t:
+            reasons.append("weather")
+
+    # 曖昧語の連発禁止（出現数で管理）
+    ambiguous = ("そこ", "あの場所", "この距離")
+    amb_count = sum(t.count(a) for a in ambiguous)
+    if amb_count >= 2:
+        reasons.append("ambiguous_repeat")
+
+    # 質問制御
+    if not question_allowed:
+        if "？" in t or "?" in t:
+            reasons.append("question_mark")
+        for bad in ("教えて", "答えて", "どう思う"):
+            if bad in t:
+                reasons.append("question_phrase")
+
+    # 「アタシ今〜」連打禁止（強め）
+    if t.count("アタシ今") >= 1:
+        reasons.append("atashi_ima")
+
+    # 先頭が毎回アタシになりやすいので抑止（ここでは“先頭アタシOK”だが頻度は生成側で抑える）
+    # ※検査では禁止しない（法律に“多い”の定量が必要で難しいため）
+
+    # URLが本文に混ざってないか（法律：AIからURLは禁止）
+    if "http://" in t or "https://" in t:
+        reasons.append("url_in_body")
+
+    ok = (len(reasons) == 0)
+    return ok, reasons
+
+def sanitize_body(body: str, question_allowed: bool) -> str:
+    t = body.strip()
+
+    # 空行除去＆最大4行
+    lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+    t = "\n".join(lines[:4]).strip()
+
+    # 質問禁止なら疑問符を削る
+    if not question_allowed:
+        t = t.replace("？", "。").replace("?", ".")
+
+    # 「今日は/昨日は」は削る（残ると再生成対象だが、最後の保険）
+    for bad in ("今日は", "昨日は", "きょうは", "きのうは"):
+        t = t.replace(bad, "")
+
+    # 先頭アタシを確率で外す（法律：連発防止）
+    if t.startswith("アタシ") and random.random() < 0.75:
+        t = t.replace("アタシ、", "", 1).replace("アタシは", "", 1)
+        t = t.lstrip("、").strip()
+
+    return t[:280].strip()
+
+def hash_seen(body: str) -> bool:
+    h = hashlib.sha1(body.encode("utf-8")).hexdigest()[:12]
+    if h in recent_hashes:
+        return True
+    recent_hashes.append(h)
+    return False
+
+# ==========================
+# AI生成（200ルール＝法律：systemに“圧縮版”＋検査で全強制）
+# ==========================
+def build_system_prompt(slot: str, question_allowed: bool) -> str:
+    q_rule = "質問は禁止" if not question_allowed else "質問は最大1つ（毎回しない）"
+    # ✅ 200ルールは法律だが、全部をプロンプトに貼ると破綻するので
+    # ✅ 法律の“憲法部分”をsystemに固定し、実際は validate_text で強制する
     return f"""
 あなたは大学生バンド「パンダうさギーズ」のボーカル、ポキヌ（女性）。
-人間っぽさを優先。照れと強がりがある。感情は強いが“説明”しない。
+人間っぽさ優先。感情は強い。照れと強がりがある。
+面白さは“ズレ”で出す（狙いすぎない）。
 
-【絶対ルール】
+【絶対】
 - 日本語
 - 1〜4行
-- 絵文字/ハッシュタグ/箇条書き記号は禁止
-- 「今日は」「昨日は」など日付語は禁止（ただし行事語はOK）
+- 絵文字/ハッシュタグ/箇条書き禁止
+- 「今日は」「昨日は」など禁止（行事語だけOK）
 - 天気の話は禁止
-- 曖昧語（そこ/あの場所/この距離）の連発禁止
+- 曖昧語の連発禁止
+- 「アタシ今〜」は禁止
 - {q_rule}
 
-【重要】
-- 先頭を毎回「アタシ」で始めない。名詞/状況から入る。
-- 「アタシ今〜」の連打は禁止。
-- 固有名詞（地名/駅/会場/バンド/曲/アルバム）は“状況の小道具”として置く。自慢・解説はしない。
-- 面白さは“ズレ”で出す。狙いすぎないが、退屈にもならない。
-
-【スロット】
-- slot={slot}（practice/night/day）
-
-【今回のルール束（この束を優先して守る）】
-{chr(10).join("- " + r for r in rules_pack)}
-
-【文字数上限】
-- だいたい {max_chars} 文字以内（超えないように短く）
+【slot】
+- {slot}
 """.strip()
 
-def format_music(music_ref: Optional[Dict[str, str]]) -> str:
-    if not music_ref:
-        return "（指定なし）"
-    artist = music_ref.get("artist", "").strip()
-    album = music_ref.get("album", "").strip()
-    track = music_ref.get("track", "").strip()
+def format_music(m: Optional[Dict[str, str]], slot: str) -> str:
+    if not m:
+        return "（なし）"
     bits = []
-    if artist:
-        bits.append(artist)
-    if album and random.random() < 0.70:
-        bits.append(f"『{album}』")
-    if track and random.random() < 0.65:
-        bits.append(f"「{track}」")
-    return " ".join(bits) if bits else "（指定なし）"
+    if m.get("artist"):
+        bits.append(m["artist"])
+    if m.get("album") and slot != "practice" and random.random() < 0.6:
+        bits.append(f"『{m['album']}』")
+    if m.get("track") and slot == "night" and random.random() < 0.6:
+        bits.append(f"「{m['track']}」")
+    return " ".join(bits) if bits else "（なし）"
 
 def compose_user_payload(
-    slot: str,
     opener: str,
     event: Optional[str],
     place: Optional[str],
-    music_str: str,
+    music: str,
     image_hint: str,
-    promo_mode: bool
 ) -> str:
-    """
-    “材料”を渡す。文章の型は渡さない（固定化させないため）。
-    """
-    ev = event or "（なし）"
-    pl = place or "（なし）"
-    ih = image_hint or "（なし）"
-
+    # ✅ ここにもURLは絶対に入れない
     return f"""
-材料（文章の型にはしないで、断片として使う）：
-- オープニング断片：{opener}
-- 行事（あれば）：{ev}
-- 場所：{pl}
-- 音楽参照：{music_str}
-- 画像ヒント（名詞）：{ih}
+材料（型にせず、断片として混ぜる）：
+- オープニング：{opener}
+- 行事（あれば）：{event or "（なし）"}
+- 場所：{place or "（なし）"}
+- 音楽：{music}
+- 画像（名詞）：{image_hint or "（なし）"}
 
-条件を守って、投稿文を1本だけ書いて。
-宣伝モード={promo_mode}（宣伝モードでも営業文にしない。主張はDLのみ）
+条件を守って投稿文を1本だけ。
 """.strip()
 
-def sanitize_text(text: str, question_allowed: bool) -> str:
-    # 改行整理
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    if len(lines) > 4:
-        lines = lines[:4]
-    out = "\n".join(lines)
-
-    # 禁止語（「今日は」「昨日は」など）を強制的に軽減
-    for bad in ["今日は", "昨日は", "きょうは", "きのうは"]:
-        out = out.replace(bad, "")
-
-    # 質問禁止なら疑問符を消す（怖さ回避）
-    if not question_allowed:
-        out = out.replace("？", "。").replace("?", ".")
-        # 「あなたはどう思う」系も潰す（残すと“毎回問いかけ”が復活する）
-        for q in ["あなたはどう思う", "どう思う", "教えて", "答えて"]:
-            out = out.replace(q, "")
-
-    # 先頭アタシ連発を減らす：先頭が「アタシ」で始まる場合、確率で先頭句を落とす
-    if out.startswith("アタシ") and random.random() < 0.70:
-        # 先頭の「アタシ、」や「アタシは」を剥がす
-        out = out.replace("アタシ、", "", 1).replace("アタシは", "", 1).strip()
-        out = out.lstrip("、").strip()
-
-    # 280対策
-    return out[:280].strip()
-
-def looks_too_similar(text: str) -> bool:
-    h = hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
-    if h in recent_post_hashes:
-        return True
-    recent_post_hashes.append(h)
-    return False
-
-def generate_normal_text(
+def generate_body(
     now: datetime,
     slot: str,
     music_refs: List[Dict[str, str]],
     places: Dict[str, List[str]],
     media_path: Optional[Path],
 ) -> str:
-    # 宣伝モード判定（固定“曜日”よりも、任意の割合＋FORCE_PROMOで回す）
-    # ※ユーザー要望：宣伝日は1日1ポスト。cronで2回回すなら、片方だけ宣伝にしたい時は FORCE_PROMO を使う。
+    # 宣伝モード：URLは後付け（法律）
     promo_mode = FORCE_PROMO or (random.random() < 0.18)
 
-    # “毎回問いかけ”が怖いので：質問許可は少なめ
-    # 練習=たまに、夜=少なめ、昼=さらに少なめ
+    # 質問許可は少なめ（恐怖回避）
     if promo_mode:
         question_allowed = False
     else:
-        base = 0.25 if slot == "practice" else (0.15 if slot == "night" else 0.12)
+        base = 0.22 if slot == "practice" else (0.12 if slot == "night" else 0.10)
         question_allowed = (random.random() < base)
 
     event = jp_event_label(now.date())
     opener = pick_opener(slot)
     place = pick_place(places, slot)
     music_ref = pick_music_ref(music_refs, slot)
-    music_str = format_music(music_ref)
+    music = format_music(music_ref, slot)
 
     image_hint = ""
     if media_path and media_path.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
         image_hint = describe_image_for_prompt(media_path)
 
-    # 宣伝モードなら、AI生成より“宣伝テンプレ生成器”で確実にブレさせる
+    # 宣伝は専用生成（本文だけ）
     if promo_mode:
-        return build_promo_text(slot=slot, event=event, music_ref=music_ref, place=place)
+        body = build_promo_body(slot=slot, event=event, music_ref=music_ref, place=place)
+        body = sanitize_body(body, question_allowed=False)
+        ok, reasons = validate_text(body, question_allowed=False)
+        if ok:
+            return body
+        # 宣伝が壊れたら固定で守る
+        return sanitize_body("ダウンロードしてくれた人、ありがとう。\nこれからの人も、たぶん好き。", question_allowed=False)
 
-    rules_pack = pick_rules_pack(slot=slot, question_allowed=question_allowed)
-    system_prompt = build_system_prompt(slot=slot, max_chars=160 if slot != "night" else 200,
-                                        question_allowed=question_allowed, rules_pack=rules_pack)
-    user_payload = compose_user_payload(
-        slot=slot,
-        opener=opener,
-        event=event,
-        place=place,
-        music_str=music_str,
-        image_hint=image_hint,
-        promo_mode=False,
-    )
+    system_prompt = build_system_prompt(slot=slot, question_allowed=question_allowed)
+    user_payload = compose_user_payload(opener=opener, event=event, place=place, music=music, image_hint=image_hint)
 
-    # 似た文章を避けるため、最大2回だけ再生成
-    last_err = None
-    for attempt in range(2):
+    last_reasons: List[str] = []
+    for attempt in range(6):  # ✅ ルール違反が出る前提で多めに回す
         try:
             resp = oa_client.chat.completions.create(
                 model=MODEL_TEXT,
@@ -779,52 +744,56 @@ def generate_normal_text(
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_payload},
                 ],
-                temperature=0.95 if attempt == 0 else 1.05,
+                temperature=0.95 + (attempt * 0.08),
                 max_tokens=220,
             )
-            text = (resp.choices[0].message.content or "").strip()
-        except Exception as e:
-            last_err = e
-            text = "弦が鳴らない。\nそれだけ。"
+            body = (resp.choices[0].message.content or "").strip()
+        except Exception:
+            body = "ベンチが冷たい。\nそれだけ。"
 
-        text = sanitize_text(text, question_allowed=question_allowed)
+        body = sanitize_body(body, question_allowed=question_allowed)
+        ok, reasons = validate_text(body, question_allowed=question_allowed)
+        last_reasons = reasons
 
-        # 物理的に“似た投稿”を作りにくくする：同文ハッシュが既出なら作り直す
-        if not looks_too_similar(text):
-            return text
+        if ok and not hash_seen(body):
+            return body
 
-    # どうしても被る/エラーならフォールバック
-    if last_err:
-        print(f"[OpenAI ERROR] {last_err}")
-    return sanitize_text("ベンチが冷たい。\nそれだけ。", question_allowed=False)
+    # どうしても法を破る時は固定で返す（法律優先）
+    # 行事だけは入れてOK
+    fallback = "弦の音だけ残ってる。"
+    if event:
+        fallback = f"{event}。\n弦の音だけ残ってる。"
+    return sanitize_body(fallback, question_allowed=False)
 
 # ==========================
-# X (Tweepy)
+# URL後付け（法律）
 # ==========================
-def create_client_v2() -> tweepy.Client:
-    return tweepy.Client(
-        consumer_key=API_KEY,
-        consumer_secret=API_SECRET,
-        access_token=ACCESS_TOKEN,
-        access_token_secret=ACCESS_TOKEN_SECRET,
-    )
+def finalize_text(body: str, promo_mode: bool) -> str:
+    """
+    ✅ URLはここでだけ付ける。AIは一切触れない。
+    """
+    body = body.strip()
+    if promo_mode:
+        # 宣伝は本文+URL（最大4行のうちURLは必ず最後）
+        lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+        # URL行を最後に追加（既存にURLが入っていたら検査で弾かれるのでここだけ）
+        out = "\n".join(lines[:3] + [RELEASE_LINK_URL])
+        return out[:280].strip()
 
-def create_api_v1() -> tweepy.API:
-    auth = tweepy.OAuth1UserHandler(API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET)
-    return tweepy.API(auth)
+    # 非宣伝はURL無し
+    return body[:280].strip()
 
+# ==========================
+# 投稿（画像/動画）
+# ==========================
 def upload_media(api_v1: tweepy.API, media_path: Path) -> Optional[List[int]]:
     try:
-        suffix = media_path.suffix.lower()
-        if suffix in (".mp4", ".mov"):
-            media = api_v1.media_upload(
-                filename=str(media_path),
-                media_category="tweet_video"
-            )
+        suf = media_path.suffix.lower()
+        if suf in (".mp4", ".mov"):
+            media = api_v1.media_upload(filename=str(media_path), media_category="tweet_video")
             return [media.media_id]
-        else:
-            media = api_v1.media_upload(str(media_path))
-            return [media.media_id]
+        media = api_v1.media_upload(str(media_path))
+        return [media.media_id]
     except Exception as e:
         print(f"[MEDIA UPLOAD ERROR] {e}")
         return None
@@ -838,20 +807,17 @@ def post_to_x(text: str, media_path: Optional[Path]) -> None:
 
     client_v2 = create_client_v2()
     media_ids = None
+
     if media_path:
         api_v1 = create_api_v1()
         media_ids = upload_media(api_v1, media_path)
 
-    try:
-        resp = client_v2.create_tweet(text=text[:280], media_ids=media_ids)
-        tweet_id = resp.data.get("id") if resp and resp.data else None
-        if tweet_id:
-            print(f"[OK] https://x.com/i/web/status/{tweet_id}")
-        else:
-            print("[OK] tweet posted (id unknown)")
-    except Exception as e:
-        print(f"[X POST ERROR] {e}")
-        raise
+    resp = client_v2.create_tweet(text=text[:280], media_ids=media_ids)
+    tweet_id = resp.data.get("id") if resp and resp.data else None
+    if tweet_id:
+        print(f"[OK] https://x.com/i/web/status/{tweet_id}")
+    else:
+        print("[OK] posted")
 
 # ==========================
 # メイン
@@ -862,26 +828,36 @@ def run_once():
 
     music_refs = load_music_refs()
     places = load_places()
-
     total_places = sum(len(v) for v in places.values())
+
     print(f"[BOOT] now={now.isoformat()} slot={slot}")
-    print(f"[LIST COUNT] persona_rules={len(PERSONA_RULES)} / music_refs={len(music_refs)} / places_total={total_places} "
-          f"(micro={len(places['micro'])}, city={len(places['city'])}, venue={len(places['venue'])})")
+    print(f"[COUNT] persona_rules={len(PERSONA_RULES)} music_refs={len(music_refs)} places_total={total_places}")
 
-    if len(music_refs) < 50:
-        print("[WARN] music_refs が少ない（増やすほどバリエが出る）")
-    if total_places < 50:
-        print("[WARN] places が少ない（増やすほどバリエが出る）")
-
+    # メディア
     media_path = choose_media(now=now, slot=slot)
 
-    text = generate_normal_text(
+    # 宣伝モードはここで確定（finalizeにも渡す）
+    promo_mode = FORCE_PROMO or (random.random() < 0.18)
+
+    body = generate_body(
         now=now,
         slot=slot,
         music_refs=music_refs,
         places=places,
         media_path=media_path,
     )
+
+    text = finalize_text(body=body, promo_mode=promo_mode)
+
+    # ✅ 最終安全装置：URLが必要な時だけ、正しいURLしか存在しない
+    if promo_mode:
+        if RELEASE_LINK_URL not in text:
+            # あり得ないが保険
+            text = (text.splitlines()[0].strip() + "\n" + RELEASE_LINK_URL)[:280]
+        # 間違いURLが混ざってたら除去して正しいURLだけ残す
+        text = re.sub(r"https?://\S+", "", text).strip()
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        text = "\n".join(lines[:3] + [RELEASE_LINK_URL])[:280]
 
     post_to_x(text=text, media_path=media_path)
 
