@@ -16,12 +16,16 @@ async function loadCurrentWithFallback() {
       const response = await fetch(remote, { credentials: "omit" });
       if (!response.ok) throw new Error(`online current: ${response.status}`);
       const value = await response.json();
-      if (value && typeof value.currentWeek === "string") return value;
+      if (value && typeof value.currentWeek === "object" && value.currentWeek) {
+        const runtimeWeeks = [...(Array.isArray(value.pastWeeks) ? value.pastWeeks : []), value.currentWeek];
+        return { current: { currentWeek: value.currentWeek.id, currentSong: value.currentWeek.songId, preview: false }, weeks: runtimeWeeks };
+      }
+      if (value && typeof value.currentWeek === "string") return { current: value, weeks: null };
     } catch (error) {
       console.warn("online current unavailable; using static fallback", error);
     }
   }
-  return loadJson("current.json");
+  return { current: await loadJson("current.json"), weeks: null };
 }
 
 function imageUrl(path) {
@@ -121,11 +125,13 @@ function playSong(song) {
 
 async function init() {
   try {
-    [state.songs, state.weeks, state.current] = await Promise.all([
+    [state.songs, state.weeks] = await Promise.all([
       loadJson("songs.json"),
       loadJson("weeks.json"),
-      loadCurrentWithFallback(),
     ]);
+    const runtime = await loadCurrentWithFallback();
+    state.current = runtime.current;
+    if (runtime.weeks) state.weeks = runtime.weeks;
     renderCurrentWeek();
     renderWeeks();
     const currentSong = state.songs.find((song) => song.id === state.current.currentSong);

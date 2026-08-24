@@ -61,3 +61,15 @@ python3 production_regression.py --days 90 --seeds 1001 3003 5005
 ```
 
 送信可能条件は`AUTONOMOUS_ENABLED=true`かつ`ALLOW_EXTERNAL_SEND=true`かつ`KILL_SWITCH=false`です。Phase 4には実ネットワークsenderを接続していません。
+
+## Fake Production adapters
+
+Phase 5も実サービスへ接続しません。Fake Supabase、Fake X、Fake WEEK Publisher、Fake Notifierでtransactionとreconciliationを検証します。
+
+```bash
+python3 fake_production_30d.py
+python3 chaos_test.py --runs 300 --seed 5050
+python3 autonomous.py --credentials
+```
+
+設計は`docs/production_adapter_design.md`、緊急停止手順は`docs/panic_stop.md`、未適用RLS案は`db/rls.sql`を参照してください。

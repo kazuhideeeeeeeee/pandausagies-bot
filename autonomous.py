@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import os
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pathlib import Path
 
 from pandausagies_v2.autonomous import format_observation, observe
@@ -13,8 +16,24 @@ def main() -> None:
     parser.add_argument("--observe", action="store_true", help="read-only decision preview")
     parser.add_argument("--health", action="store_true", help="read-only production safety status")
     parser.add_argument("--storage", default="var/autonomous.sqlite3")
+    parser.add_argument("--credentials", action="store_true", help="show configured/missing/invalid only")
+    parser.add_argument("--reset-circuit", action="store_true")
+    parser.add_argument("--confirm-reset-circuit", action="store_true")
     parser.add_argument("--seed", type=int, default=1)
     args = parser.parse_args()
+    if args.credentials:
+        import json
+        present=lambda *names: "configured" if all(os.getenv(name,"") for name in names) else "missing"
+        url=os.getenv("SUPABASE_URL",""); epoch=os.getenv("AUTONOMOUS_EPOCH",""); timezone=os.getenv("TIMEZONE","Asia/Tokyo")
+        try: ZoneInfo(timezone); tz="configured"
+        except ZoneInfoNotFoundError: tz="invalid format"
+        try: parsed=datetime.fromisoformat(epoch); epoch_status="configured" if parsed.tzinfo else "invalid format"
+        except ValueError: epoch_status="missing" if not epoch else "invalid format"
+        report={"mode":"CREDENTIALS","x_credentials":present("API_KEY","API_SECRET","ACCESS_TOKEN","ACCESS_TOKEN_SECRET"),"supabase_url":"configured" if url.startswith("https://") else ("missing" if not url else "invalid format"),"service_role":present("SUPABASE_SERVICE_ROLE_KEY"),"timezone":tz,"autonomous_epoch":epoch_status}
+        print(json.dumps(report,ensure_ascii=False,indent=2)); return
+    if args.reset_circuit:
+        if not args.confirm_reset_circuit: parser.error("--confirm-reset-circuit is required")
+        SQLiteStorage(Path(args.storage)).set_setting("consecutive_errors",0); print("circuit breaker reset by human command"); return
     if args.health:
         import json
         config=SafetyConfig.from_env()

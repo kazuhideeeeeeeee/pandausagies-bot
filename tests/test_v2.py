@@ -31,7 +31,8 @@ class V2FoundationTests(unittest.TestCase):
     def test_site_online_current_has_static_fallback(self):
         script = (Path(__file__).resolve().parent.parent / "site" / "app.js").read_text(encoding="utf-8")
         self.assertIn("PANDAUSAGIES_CURRENT_ENDPOINT", script)
-        self.assertIn('return loadJson("current.json")', script)
+        self.assertIn('await loadJson("current.json")', script)
+        self.assertIn("runtime.weeks", script)
 
     def test_candidate_is_short_and_structured(self):
         content = load_content(Path(__file__).resolve().parent.parent / "content")
