@@ -1,0 +1,92 @@
+[
+  {
+    "id": "tokunaru",
+    "title": "遠くなる",
+    "youtubeVideoId": "G3S9MQibBWM",
+    "youtubeUrl": "https://www.youtube.com/watch?v=G3S9MQibBWM",
+    "active": true,
+    "release": "パンダうさギーズ",
+    "order": 1
+  },
+  {
+    "id": "come-on",
+    "title": "Come On",
+    "youtubeVideoId": "nvftQJgKzF0",
+    "youtubeUrl": "https://www.youtube.com/watch?v=nvftQJgKzF0",
+    "active": true,
+    "release": "パンダうさギーズ",
+    "order": 2
+  },
+  {
+    "id": "wakaranaitte-iunayo",
+    "title": "わからないっていうなよ",
+    "youtubeVideoId": "6HgpBssiUEA",
+    "youtubeUrl": "https://www.youtube.com/watch?v=6HgpBssiUEA",
+    "active": true,
+    "release": "パンダうさギーズ",
+    "order": 3
+  },
+  {
+    "id": "kakinoki-no-saru",
+    "title": "柿の木の猿",
+    "youtubeVideoId": "AYFH1KOxHbw",
+    "youtubeUrl": "https://www.youtube.com/watch?v=AYFH1KOxHbw",
+    "active": true,
+    "release": "パンダうさギーズ",
+    "order": 4
+  },
+  {
+    "id": "sekai-de-ichiban-yasashii-otoko",
+    "title": "世界で一番優しい男",
+    "youtubeVideoId": "JpEepeGgmt4",
+    "youtubeUrl": "https://www.youtube.com/watch?v=JpEepeGgmt4",
+    "active": true,
+    "release": "パンダうさギーズ",
+    "order": 5
+  },
+  {
+    "id": "baby",
+    "title": "Baby",
+    "youtubeVideoId": "Y3PFKTVvD6w",
+    "youtubeUrl": "https://www.youtube.com/watch?v=Y3PFKTVvD6w",
+    "active": true,
+    "release": "パンダうさギーズ",
+    "order": 6
+  },
+  {
+    "id": "onaji-tsuki-album",
+    "title": "同じ月(アルバムバージョン)",
+    "youtubeVideoId": "Zl30Fw2eJzM",
+    "youtubeUrl": "https://www.youtube.com/watch?v=Zl30Fw2eJzM",
+    "active": true,
+    "release": "パンダうさギーズ",
+    "order": 7
+  },
+  {
+    "id": "pandausagies-sengen",
+    "title": "パンダうさギーズ宣言",
+    "youtubeVideoId": "OKmuI01LTF8",
+    "youtubeUrl": "https://www.youtube.com/watch?v=OKmuI01LTF8",
+    "active": true,
+    "release": "パンダうさギーズ",
+    "order": 8
+  },
+  {
+    "id": "onaji-tsuki-single",
+    "title": "同じ月(シングルバージョン)",
+    "youtubeVideoId": "eBt7aBzkMh8",
+    "youtubeUrl": "https://www.youtube.com/watch?v=eBt7aBzkMh8",
+    "active": true,
+    "release": "同じ月",
+    "order": 1
+  },
+  {
+    "id": "whatever",
+    "title": "ワットエバー",
+    "youtubeVideoId": "ajoQcfkdhko",
+    "youtubeUrl": "https://www.youtube.com/watch?v=ajoQcfkdhko",
+    "active": true,
+    "release": "同じ月",
+    "order": 2
+  }
+]

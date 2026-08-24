@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>pandausagies</title>
+    <meta name="description" content="pandausagies — 52 weeks, songs, and traces of ordinary days.">
+    <link rel="canonical" href="https://pandausa.dwmdog.com/">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="pandausagies">
+    <meta property="og:description" content="52 weeks, songs, and traces of ordinary days.">
+    <meta property="og:url" content="https://pandausa.dwmdog.com/">
+    <meta property="og:image" content="https://pandausa.dwmdog.com/media/weeks/week-00.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="pandausagies">
+    <meta name="twitter:description" content="52 weeks, songs, and traces of ordinary days.">
+    <meta name="twitter:image" content="https://pandausa.dwmdog.com/media/weeks/week-00.png">
+    <meta name="theme-color" content="#171713">
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./player-core.js" defer></script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <header class="hero" id="home">
+      <div class="hero-media">
+        <img id="hero-image" src="../media/weeks/week-00.png" alt="ピンクの髪とダブルブリッジ眼鏡のpandausagies" width="2016" height="2112">
+      </div>
+      <div class="hero-label">
+        <p class="eyebrow">WEEK <span data-current-week>00</span></p>
+        <h1>pandausagies</h1>
+        <div class="hero-actions">
+          <button class="action action-play" type="button" data-random-play>PLAY RANDOM</button>
+          <a class="action" href="https://big-up.style/uviwifz2tO" target="_blank" rel="noopener">DOWNLOAD</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="section week" aria-labelledby="week-heading">
+        <div class="section-heading">
+          <p class="issue">52 WEEKS / <span data-current-week>00</span></p>
+          <h2 id="week-heading">THIS WEEK</h2>
+          <time id="week-date" datetime="2026-08-24">2026.08.24</time>
+        </div>
+        <figure class="week-photo">
+          <img id="week-image" src="../media/weeks/week-00.png" alt="今週のpandausagies" width="2016" height="2112" loading="lazy">
+          <figcaption id="week-text">お弁当のすき間<br>パンで埋めた</figcaption>
+        </figure>
+      </section>
+
+      <section class="section song" id="play" aria-labelledby="song-heading">
+        <div class="section-heading inverse">
+          <p class="issue">FROM THE RECORD BOX</p>
+          <h2 id="song-heading">THIS WEEK'S SONG</h2>
+        </div>
+        <div class="player-shell">
+          <p class="track-number" aria-hidden="true">▶</p>
+          <div>
+            <p class="track-label">NOW / NOT SELECTED</p>
+            <h3 id="song-title">曲はこれから入る</h3>
+            <p id="song-note">まだ空っぽ</p>
+          </div>
+          <div id="video-stage" class="video-stage" hidden></div>
+          <div class="player-actions">
+            <button type="button" data-random-play>PLAY RANDOM</button>
+            <button type="button" data-another-song>PLAY SOMETHING ELSE</button>
+          </div>
+          <p id="player-status" class="player-status" role="status" aria-live="polite">songs.jsonに実在曲を追加すると、ここで鳴ります</p>
+        </div>
+      </section>
+
+      <section class="section archive" id="weeks" aria-labelledby="archive-heading">
+        <div class="section-heading">
+          <p class="issue">AN OLD PHOTO BOX, ONE A WEEK</p>
+          <h2 id="archive-heading">52 WEEKS<br>OF pandausagies</h2>
+        </div>
+        <div id="weeks-list" class="weeks-list"></div>
+      </section>
+
+      <section class="download-panel" id="download" aria-label="Download">
+        <p>曲の置いてある場所</p>
+        <a href="https://big-up.style/uviwifz2tO" target="_blank" rel="noopener">DOWNLOAD <span aria-hidden="true">↗</span></a>
+      </section>
+
+      <section class="section about" aria-labelledby="about-heading">
+        <p class="issue">ABOUT</p>
+        <h2 id="about-heading">pandausagies</h2>
+        <p>ピンクの髪とダブルブリッジの眼鏡。<br>制作会社のペーペー。<br>一人暮らし。お弁当主義。<br>曲も作る。</p>
+      </section>
+    </main>
+
+    <footer>
+      <p>pandausagies</p>
+      <p>52 WEEKS / 2026—</p>
+    </footer>
+
+    <nav class="mobile-nav" aria-label="Main navigation">
+      <a href="#home">HOME</a>
+      <a href="#weeks">WEEKS</a>
+      <button type="button" data-random-play>PLAY</button>
+      <a href="https://big-up.style/uviwifz2tO" target="_blank" rel="noopener">DL</a>
+    </nav>
+  </body>
+</html>
