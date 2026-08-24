@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-REQUIRED_FILES = ("songs.json", "weeks.json", "current.json")
+REQUIRED_FILES = ("songs.json", "weeks.json", "current.json", "media.json")
 
 
 def read_json(path: Path) -> Any:

@@ -28,6 +28,11 @@ class V2FoundationTests(unittest.TestCase):
         self.assertIn('rel="canonical" href="https://pandausa.dwmdog.com/"', html)
         self.assertIn("https://big-up.style/uviwifz2tO", html)
 
+    def test_site_online_current_has_static_fallback(self):
+        script = (Path(__file__).resolve().parent.parent / "site" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("PANDAUSAGIES_CURRENT_ENDPOINT", script)
+        self.assertIn('return loadJson("current.json")', script)
+
     def test_candidate_is_short_and_structured(self):
         content = load_content(Path(__file__).resolve().parent.parent / "content")
         candidate = build_candidate(

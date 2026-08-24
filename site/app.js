@@ -9,6 +9,21 @@ async function loadJson(name) {
   return response.json();
 }
 
+async function loadCurrentWithFallback() {
+  const remote = globalThis.PANDAUSAGIES_CURRENT_ENDPOINT;
+  if (typeof remote === "string" && /^https:\/\//.test(remote)) {
+    try {
+      const response = await fetch(remote, { credentials: "omit" });
+      if (!response.ok) throw new Error(`online current: ${response.status}`);
+      const value = await response.json();
+      if (value && typeof value.currentWeek === "string") return value;
+    } catch (error) {
+      console.warn("online current unavailable; using static fallback", error);
+    }
+  }
+  return loadJson("current.json");
+}
+
 function imageUrl(path) {
   return path ? `../${path.replace(/^\//, "")}` : "";
 }
@@ -109,7 +124,7 @@ async function init() {
     [state.songs, state.weeks, state.current] = await Promise.all([
       loadJson("songs.json"),
       loadJson("weeks.json"),
-      loadJson("current.json"),
+      loadCurrentWithFallback(),
     ]);
     renderCurrentWeek();
     renderWeeks();

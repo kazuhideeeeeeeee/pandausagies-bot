@@ -1,0 +1,52 @@
+[
+  {
+    "id": "portrait-coat",
+    "path": "media/weeks/week-00.png",
+    "sha256": "fff07f3724eb7e3d4bf2cbbef57a6adb761d073e3e792846a64a519030c73ce7",
+    "mode": "daily",
+    "last_used": null,
+    "use_count": 0,
+    "week_used": [],
+    "active": true
+  },
+  {
+    "id": "old-room-table",
+    "path": "media/reference/2ndg.png",
+    "sha256": "e5f4a81b41e24e929fe1b2c7617cddd210e2d4d78abcce916e53b14bbab6c49d",
+    "mode": "daily",
+    "last_used": null,
+    "use_count": 0,
+    "week_used": [],
+    "active": true
+  },
+  {
+    "id": "crown-flowers",
+    "path": "media/reference/baby3.png",
+    "sha256": "dd737a86758d5439ba9153bf1c03f5ea86f7de55a1444b0bf47b62709bcdcf2b",
+    "mode": "celebration",
+    "last_used": null,
+    "use_count": 0,
+    "week_used": [],
+    "active": true
+  },
+  {
+    "id": "flowers-portrait",
+    "path": "media/reference/ps.png",
+    "sha256": "b301438e5a3b107c633eac9e15d6695df6875ee1170bb9e3fabff52f23515427",
+    "mode": "celebration",
+    "last_used": null,
+    "use_count": 0,
+    "week_used": [],
+    "active": true
+  },
+  {
+    "id": "sweater-portrait",
+    "path": "media/reference/bjork.png",
+    "sha256": "ed4104ca2a58670df543068f006e3f2a324c758f4c5f40f51c03076b91bfa790",
+    "mode": "daily",
+    "last_used": null,
+    "use_count": 0,
+    "week_used": [],
+    "active": true
+  }
+]

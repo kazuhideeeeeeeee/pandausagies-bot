@@ -38,3 +38,14 @@ Render Static SiteではBuild Commandを `python scripts/build_site.py`、Publis
 - `db/schema.sql`
 
 `bot.py`、`ugokubot.py`、旧人格・音楽参照・地名資料、旧画像と動画はlegacy原本として保持します。
+
+## AUTONOMOUS CORE（ローカル観察専用）
+
+Phase 3では、固定された人格・声・安全制約の内側で、投稿／skip、カテゴリー、モチーフ、life event、曲、既存画像、WEEKを選ぶDirectorを追加しています。コードやCharacter Bibleを自分で変更する機能はありません。
+
+```bash
+python autonomous.py --observe --seed 1
+python simulate.py --days 60 --seed 1234
+```
+
+OBSERVEとSIMULATIONは状態を保存せず、X、OpenAI、Supabase、Render、画像生成APIへ接続しません。正式WEEK 01も確定しません。OpenAIは将来、Directorが決めた内容を1〜2行へ整える任意の表現アダプタに限定し、キーが無い場合は現在のローカル断片だけで継続します。
