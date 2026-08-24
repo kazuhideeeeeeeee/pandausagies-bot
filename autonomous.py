@@ -43,7 +43,7 @@ def main() -> None:
         from pandausagies_v2.x_ingestion import XReadConfig,run_x_read
         from pandausagies_v2.x_read import XReadClient
         truth=lambda name: os.getenv(name,"").strip().lower()=="true"
-        cfg=XReadConfig(os.getenv("APP_ENV",""),os.getenv("X_HANDLE",""),truth("X_READ_ENABLED"),truth("X_WRITE_ENABLED"),truth("ALLOW_EXTERNAL_SEND"),truth("AUTONOMOUS_ENABLED"),truth("KILL_SWITCH"),int(os.getenv("X_BACKFILL_LIMIT","10")),int(os.getenv("X_MAX_PAGES","2")))
+        cfg=XReadConfig(os.getenv("APP_ENV",""),os.getenv("X_HANDLE",""),truth("X_READ_ENABLED"),truth("X_WRITE_ENABLED"),truth("ALLOW_EXTERNAL_SEND"),truth("AUTONOMOUS_ENABLED"),truth("KILL_SWITCH"),int(os.getenv("X_BACKFILL_LIMIT","10")),int(os.getenv("X_MAX_PAGES","2")),truth("ALLOW_AUTOMATED_REPLIES"))
         try:
             result=run_x_read(XReadClient(os.getenv("X_BEARER_TOKEN","")),SupabaseHttpClient(os.getenv("SUPABASE_URL",""),os.getenv("SUPABASE_SECRET_KEY","")),cfg,force_resolve=truth("X_FORCE_RESOLVE"))
         except Exception:

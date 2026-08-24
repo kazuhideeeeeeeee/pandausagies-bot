@@ -1,9 +1,11 @@
 __pycache__/
 .env
+.env.production
 supabase/.temp/
 *.pyc
 .DS_Store
 .venv/
+.tools/
 *.log
 .pytest_cache/
 dist/

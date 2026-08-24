@@ -32,7 +32,9 @@ async function loadCurrentWithFallback() {
 }
 
 function imageUrl(path) {
-  return path ? `../${path.replace(/^\//, "")}` : "";
+  if (!path) return "";
+  if (/^https:\/\//.test(path)) return path;
+  return `../${path.replace(/^\//, "")}`;
 }
 
 function multilineText(element, value) {

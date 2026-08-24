@@ -20,10 +20,17 @@ class XReadConfig:
     kill_switch: bool
     backfill_limit: int = 10
     max_pages: int = 2
+    allow_automated_replies: bool = False
 
     def require_safe(self) -> None:
-        if self.app_env != "staging" or self.handle.casefold() != "pandausagies": raise RuntimeError("X read staging identity guard failed")
-        if not self.read_enabled or self.write_enabled or self.allow_external_send or self.autonomous_enabled or not self.kill_switch: raise RuntimeError("X read hard gate failed")
+        if self.app_env not in ("staging", "production") or self.handle.casefold() != "pandausagies":
+            raise RuntimeError("X read identity guard failed")
+        if not self.read_enabled or self.allow_automated_replies:
+            raise RuntimeError("X read hard gate failed")
+        if self.app_env == "staging" and (
+            self.write_enabled or self.allow_external_send or self.autonomous_enabled or not self.kill_switch
+        ):
+            raise RuntimeError("X read staging hard gate failed")
 
 
 def _cursor(db: SupabaseHttpClient) -> dict[str,Any] | None:

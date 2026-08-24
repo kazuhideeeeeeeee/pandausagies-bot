@@ -157,7 +157,7 @@ class SupabaseStorage:
             return Memory.from_dict(self.client.load_memory())
         rows = self.client.select("memory_state", "select=value,version&singleton=eq.true&limit=1")
         if not rows:
-            raise SupabaseError("staging memory row is missing")
+            raise SupabaseError("environment memory row is missing")
         self.memory_version = int(rows[0]["version"])
         value = rows[0].get("value") or {}
         return Memory.from_dict(value)
