@@ -13,9 +13,12 @@ async function loadCurrentWithFallback() {
   const remote = globalThis.PANDAUSAGIES_CURRENT_ENDPOINT;
   if (typeof remote === "string" && /^https:\/\//.test(remote)) {
     try {
-      const response = await fetch(remote, { credentials: "omit" });
+      const publishableKey = globalThis.PANDAUSAGIES_PUBLISHABLE_KEY;
+      const headers = typeof publishableKey === "string" && publishableKey ? { apikey: publishableKey } : {};
+      const response = await fetch(remote, { credentials: "omit", headers });
       if (!response.ok) throw new Error(`online current: ${response.status}`);
-      const value = await response.json();
+      const raw = await response.json();
+      const value = player.normalizePublicState(raw);
       if (value && typeof value.currentWeek === "object" && value.currentWeek) {
         const runtimeWeeks = [...(Array.isArray(value.pastWeeks) ? value.pastWeeks : []), value.currentWeek];
         return { current: { currentWeek: value.currentWeek.id, currentSong: value.currentWeek.songId, preview: false }, weeks: runtimeWeeks };

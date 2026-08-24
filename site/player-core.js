@@ -35,5 +35,10 @@
     return pool[Math.floor(random() * pool.length)];
   }
 
-  return { extractVideoId, activeSongs, selectRandomSong, selectAnotherSong };
+  function normalizePublicState(raw) {
+    const row = Array.isArray(raw) ? raw[0] : raw;
+    return row && typeof row.payload === "object" ? row.payload : row;
+  }
+
+  return { extractVideoId, activeSongs, selectRandomSong, selectAnotherSong, normalizePublicState };
 });

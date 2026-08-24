@@ -1,151 +1,22 @@
-create table if not exists job_runs (
-  id bigint generated always as identity primary key,
-  run_id text not null unique,
-  started_at timestamptz not null default now(),
-  finished_at timestamptz,
-  mode text not null check (mode in ('observe', 'dry_run', 'send')),
-  status text not null check (status in ('running', 'decided', 'succeeded', 'failed', 'safe_stopped')),
-  error text
-);
-
-create table if not exists posts (
-  id bigint generated always as identity primary key,
-  idempotency_key text not null unique,
-  run_id text not null unique references job_runs(run_id),
-  scheduled_at timestamptz not null,
-  category text not null,
-  body text not null,
-  should_post boolean not null,
-  delivery_status text not null check (delivery_status in ('candidate', 'sending', 'sent', 'failed')),
-  decision_reason text not null,
-  media_path text,
-  song_id text,
-  url text,
-  x_post_id text unique,
-  posted_at timestamptz,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists media_usage (
-  id bigint generated always as identity primary key,
-  post_id bigint not null references posts(id),
-  media_path text not null,
-  used_at timestamptz not null default now(),
-  unique(post_id, media_path)
-);
-
-create table if not exists song_usage (
-  id bigint generated always as identity primary key,
-  post_id bigint not null references posts(id),
-  song_id text not null,
-  used_at timestamptz not null default now(),
-  unique(post_id, song_id)
-);
-
-create table if not exists story_events (
-  id bigint generated always as identity primary key,
-  event_key text not null unique,
-  summary text not null,
-  status text not null check (status in ('open', 'closed', 'forgotten')),
-  started_at timestamptz not null default now(),
-  next_after timestamptz,
-  closed_at timestamptz
-);
-
-create table if not exists contacts (
-  x_user_id text primary key,
-  display_name text,
-  username text,
-  opted_out boolean not null default false,
-  last_contact_at timestamptz
-);
-
-create table if not exists conversations (
-  id bigint generated always as identity primary key,
-  x_post_id text not null unique,
-  x_user_id text not null references contacts(x_user_id),
-  direction text not null check (direction in ('inbound', 'outbound')),
-  body text not null,
-  received_at timestamptz not null,
-  raw_payload jsonb
-);
-
-create table if not exists reply_candidates (
-  id bigint generated always as identity primary key,
-  conversation_id bigint not null references conversations(id),
-  body text not null,
-  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'sent')),
-  approved_at timestamptz,
-  sent_at timestamptz,
-  created_at timestamptz not null default now()
-);
-
--- Phase 3 target schema. These definitions are migration-ready only; no Supabase project is created here.
-create table if not exists weeks (
-  id text primary key,
-  week_number integer not null unique,
-  starts_on date not null,
-  body text not null,
-  song_id text,
-  media_id text,
-  run_id text not null unique references job_runs(run_id),
-  status text not null check (status in ('planned', 'published', 'failed', 'simulated')),
-  finalized_at timestamptz,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists post_decisions (
-  id bigint generated always as identity primary key,
-  run_id text not null unique references job_runs(run_id),
-  decided_at timestamptz not null,
-  action text not null check (action in ('post', 'skip')),
-  category text,
-  motif text,
-  event_id text,
-  song_id text,
-  media_id text,
-  include_url boolean not null default false,
-  reason text not null,
-  snapshot jsonb not null
-);
-
-create table if not exists motif_usage (
-  id bigint generated always as identity primary key,
-  motif text not null,
-  used_at timestamptz not null,
-  post_id bigint references posts(id)
-);
-
-create table if not exists life_events (
-  id text primary key,
-  type text not null,
-  started_on date not null,
-  status text not null check (status in ('open', 'closed', 'forgotten')),
-  summary text not null,
-  motif text not null,
-  related_posts jsonb not null default '[]'::jsonb,
-  earliest_next_ref date,
-  reference_count integer not null default 1,
-  closed_at timestamptz
-);
-
-create table if not exists metrics (
-  id bigint generated always as identity primary key,
-  observed_on date not null,
-  source text not null,
-  values jsonb not null
-);
-
-create table if not exists settings (
-  key text primary key,
-  value jsonb not null,
-  updated_at timestamptz not null default now()
-);
-
-create table if not exists errors (
-  id bigint generated always as identity primary key,
-  occurred_at timestamptz not null default now(),
-  component text not null,
-  message text not null,
-  context jsonb
-);
+-- pandausagies V2 staging memory schema. Idempotent; contains no credentials.
+create table if not exists public.staging_metadata (singleton boolean primary key default true check(singleton), environment text not null default 'staging' check(environment='staging'), schema_version integer not null default 1, updated_at timestamptz not null default now());
+insert into public.staging_metadata(singleton) values(true) on conflict do nothing;
+create table if not exists public.memory_state (singleton boolean primary key default true check(singleton), environment text not null default 'staging' check(environment='staging'), version bigint not null default 0, value jsonb not null default '{}'::jsonb, updated_at timestamptz not null default now());
+insert into public.memory_state(singleton,value) values(true,'{}'::jsonb) on conflict do nothing;
+create table if not exists public.job_leases (name text primary key, environment text not null default 'staging' check(environment='staging'), owner text not null, expires_at timestamptz not null, heartbeat_at timestamptz not null default now());
+create table if not exists public.job_runs (run_id text primary key, environment text not null default 'staging' check(environment='staging'), mode text not null check(mode in ('observe','dry_run','send')), status text not null check(status in ('running','decided','succeeded','failed','safe_stopped')), started_at timestamptz not null default now(), finished_at timestamptz, decision jsonb, error text);
+create table if not exists public.post_decisions (id bigint generated always as identity primary key, run_id text not null unique references public.job_runs(run_id) on delete cascade, environment text not null default 'staging' check(environment='staging'), action text not null check(action in ('post','skip')), category text, motif text, event_id text, song_id text, media_id text, include_url boolean not null default false, reason text not null, snapshot jsonb not null, decided_at timestamptz not null default now());
+create table if not exists public.delivery_ledger (idempotency_key text primary key, run_id text not null unique references public.job_runs(run_id), environment text not null default 'staging' check(environment='staging'), kind text not null check(kind in ('post','week')), status text not null check(status in ('candidate','sending','sent','failed','planned','published')), payload jsonb not null, external_id text unique, updated_at timestamptz not null default now());
+create table if not exists public.weeks (week_number integer primary key check(week_number>0), environment text not null default 'staging' check(environment='staging'), run_id text not null unique references public.job_runs(run_id), body text not null, song_id text, media_id text, status text not null check(status in ('planned','published','failed','simulated')), finalized_at timestamptz, created_at timestamptz not null default now());
+create table if not exists public.life_events (id text primary key, environment text not null default 'staging' check(environment='staging'), value jsonb not null, status text not null check(status in ('open','closed','forgotten')), updated_at timestamptz not null default now());
+create table if not exists public.usage_history (id bigint generated always as identity primary key, environment text not null default 'staging' check(environment='staging'), kind text not null check(kind in ('song','media','motif')), item_id text not null, run_id text references public.job_runs(run_id), used_at timestamptz not null default now());
+create table if not exists public.settings (key text primary key, environment text not null default 'staging' check(environment='staging'), value jsonb not null, updated_at timestamptz not null default now());
+create table if not exists public.errors (id bigint generated always as identity primary key, environment text not null default 'staging' check(environment='staging'), run_id text, severity text not null check(severity in ('warning','critical')), message text not null, context jsonb, occurred_at timestamptz not null default now());
+-- Browser-readable projections only. Private memory never belongs here.
+create table if not exists public.public_state_snapshots (id bigint generated always as identity primary key, environment text not null default 'staging' check(environment='staging'), payload jsonb not null, published boolean not null default false, created_at timestamptz not null default now());
+create table if not exists public.public_songs (id text primary key, environment text not null default 'staging' check(environment='staging'), title text not null, youtube_video_id text not null, youtube_url text not null, release_info jsonb, active boolean not null default true);
+create table if not exists public.public_media (id text primary key, environment text not null default 'staging' check(environment='staging'), public_url text not null, alt_text text not null, active boolean not null default true);
+create index if not exists job_runs_started_at_idx on public.job_runs(started_at desc);
+create index if not exists usage_history_kind_used_at_idx on public.usage_history(kind,used_at desc);
+create index if not exists errors_occurred_at_idx on public.errors(occurred_at desc);
+create index if not exists public_snapshots_created_at_idx on public.public_state_snapshots(created_at desc) where published;

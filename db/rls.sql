@@ -1,19 +1,26 @@
--- Design only. Do not apply until a reviewed production Supabase project exists.
-alter table public_state_snapshots enable row level security;
-alter table public_songs enable row level security;
-alter table public_media enable row level security;
-alter table job_runs enable row level security;
-alter table post_decisions enable row level security;
-alter table posts enable row level security;
-alter table contacts enable row level security;
-alter table conversations enable row level security;
-alter table errors enable row level security;
-alter table settings enable row level security;
-
-create policy "anon reads public snapshots" on public_state_snapshots for select to anon using (true);
-create policy "anon reads public songs" on public_songs for select to anon using (active = true);
-create policy "anon reads public media" on public_media for select to anon using (active = true);
-
--- No anon INSERT/UPDATE/DELETE policies. Private tables intentionally have no anon policies.
-revoke insert, update, delete on public_state_snapshots, public_songs, public_media from anon;
-revoke all on job_runs, post_decisions, posts, contacts, conversations, errors, settings from anon;
+-- Only explicit public projections are browser-readable. All writes are backend-only.
+alter table public.staging_metadata enable row level security;
+alter table public.memory_state enable row level security;
+alter table public.job_leases enable row level security;
+alter table public.job_runs enable row level security;
+alter table public.post_decisions enable row level security;
+alter table public.delivery_ledger enable row level security;
+alter table public.weeks enable row level security;
+alter table public.life_events enable row level security;
+alter table public.usage_history enable row level security;
+alter table public.settings enable row level security;
+alter table public.errors enable row level security;
+alter table public.public_state_snapshots enable row level security;
+alter table public.public_songs enable row level security;
+alter table public.public_media enable row level security;
+drop policy if exists "anon reads published staging snapshots" on public.public_state_snapshots;
+drop policy if exists "anon reads active staging songs" on public.public_songs;
+drop policy if exists "anon reads active staging media" on public.public_media;
+create policy "anon reads published staging snapshots" on public.public_state_snapshots for select to anon using(environment='staging' and published);
+create policy "anon reads active staging songs" on public.public_songs for select to anon using(environment='staging' and active);
+create policy "anon reads active staging media" on public.public_media for select to anon using(environment='staging' and active);
+revoke all on all tables in schema public from anon,authenticated;
+grant usage on schema public to anon,authenticated,service_role;
+grant select on public.public_state_snapshots,public.public_songs,public.public_media to anon,authenticated;
+grant all on all tables in schema public to service_role;
+grant usage,select on all sequences in schema public to service_role;

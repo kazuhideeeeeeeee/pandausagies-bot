@@ -21,7 +21,8 @@ class Settings:
     access_token_secret: str
     openai_api_key: str
     supabase_url: str
-    supabase_service_role_key: str
+    supabase_publishable_key: str
+    supabase_secret_key: str
     content_dir: Path
     media_dir: Path
 
@@ -38,7 +39,7 @@ class Settings:
 
     @property
     def db_configured(self) -> bool:
-        return bool(self.supabase_url and self.supabase_service_role_key)
+        return bool(self.supabase_url and self.supabase_secret_key)
 
     def zone(self) -> ZoneInfo:
         return ZoneInfo(self.timezone)
@@ -55,7 +56,8 @@ def load_settings() -> Settings:
         access_token_secret=os.getenv("ACCESS_TOKEN_SECRET", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         supabase_url=os.getenv("SUPABASE_URL", ""),
-        supabase_service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY", ""),
+        supabase_publishable_key=os.getenv("SUPABASE_PUBLISHABLE_KEY", ""),
+        supabase_secret_key=os.getenv("SUPABASE_SECRET_KEY", os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")),
         content_dir=ROOT / "content",
         media_dir=ROOT / "media" / "weeks",
     )

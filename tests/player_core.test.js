@@ -37,3 +37,9 @@ test("empty song data is safe", () => {
   assert.equal(core.selectRandomSong([]), null);
   assert.equal(core.selectAnotherSong([], null), null);
 });
+
+test("Supabase public snapshot rows normalize to runtime state", () => {
+  const payload = { version: 1, generated_at: "2026-08-24T00:00:00Z", currentWeek: { id: "staging-week" }, pastWeeks: [] };
+  assert.deepEqual(core.normalizePublicState([{ payload }]), payload);
+  assert.deepEqual(core.normalizePublicState(payload), payload);
+});
