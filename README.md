@@ -49,3 +49,15 @@ python simulate.py --days 60 --seed 1234
 ```
 
 OBSERVEとSIMULATIONは状態を保存せず、X、OpenAI、Supabase、Render、画像生成APIへ接続しません。正式WEEK 01も確定しません。OpenAIは将来、Directorが決めた内容を1〜2行へ整える任意の表現アダプタに限定し、キーが無い場合は現在のローカル断片だけで継続します。
+
+## PRODUCTION SAFETY CORE
+
+ローカルSQLiteで再起動、重複run、lock競合、crash recoveryを検証できます。外部送信は既定で二重に無効です。
+
+```bash
+python3 autonomous.py --health
+python3 safety_scenarios.py
+python3 production_regression.py --days 90 --seeds 1001 3003 5005
+```
+
+送信可能条件は`AUTONOMOUS_ENABLED=true`かつ`ALLOW_EXTERNAL_SEND=true`かつ`KILL_SWITCH=false`です。Phase 4には実ネットワークsenderを接続していません。

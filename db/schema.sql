@@ -1,19 +1,22 @@
 create table if not exists job_runs (
   id bigint generated always as identity primary key,
+  run_id text not null unique,
   started_at timestamptz not null default now(),
   finished_at timestamptz,
-  mode text not null check (mode in ('dry_run', 'send')),
-  status text not null check (status in ('running', 'succeeded', 'failed')),
+  mode text not null check (mode in ('observe', 'dry_run', 'send')),
+  status text not null check (status in ('running', 'decided', 'succeeded', 'failed', 'safe_stopped')),
   error text
 );
 
 create table if not exists posts (
   id bigint generated always as identity primary key,
   idempotency_key text not null unique,
+  run_id text not null unique references job_runs(run_id),
   scheduled_at timestamptz not null,
   category text not null,
   body text not null,
   should_post boolean not null,
+  delivery_status text not null check (delivery_status in ('candidate', 'sending', 'sent', 'failed')),
   decision_reason text not null,
   media_path text,
   song_id text,
@@ -27,14 +30,16 @@ create table if not exists media_usage (
   id bigint generated always as identity primary key,
   post_id bigint not null references posts(id),
   media_path text not null,
-  used_at timestamptz not null default now()
+  used_at timestamptz not null default now(),
+  unique(post_id, media_path)
 );
 
 create table if not exists song_usage (
   id bigint generated always as identity primary key,
   post_id bigint not null references posts(id),
   song_id text not null,
-  used_at timestamptz not null default now()
+  used_at timestamptz not null default now(),
+  unique(post_id, song_id)
 );
 
 create table if not exists story_events (
@@ -83,13 +88,15 @@ create table if not exists weeks (
   body text not null,
   song_id text,
   media_id text,
-  status text not null check (status in ('draft', 'published', 'simulated')),
+  run_id text not null unique references job_runs(run_id),
+  status text not null check (status in ('planned', 'published', 'failed', 'simulated')),
   finalized_at timestamptz,
   created_at timestamptz not null default now()
 );
 
 create table if not exists post_decisions (
   id bigint generated always as identity primary key,
+  run_id text not null unique references job_runs(run_id),
   decided_at timestamptz not null,
   action text not null check (action in ('post', 'skip')),
   category text,
@@ -113,7 +120,7 @@ create table if not exists life_events (
   id text primary key,
   type text not null,
   started_on date not null,
-  status text not null check (status in ('open', 'closed')),
+  status text not null check (status in ('open', 'closed', 'forgotten')),
   summary text not null,
   motif text not null,
   related_posts jsonb not null default '[]'::jsonb,
