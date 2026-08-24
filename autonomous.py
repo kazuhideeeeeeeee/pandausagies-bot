@@ -22,6 +22,7 @@ def main() -> None:
     parser.add_argument("--health", action="store_true", help="read-only production safety status")
     parser.add_argument("--storage", default="var/autonomous.sqlite3")
     parser.add_argument("--credentials", action="store_true", help="show configured/missing/invalid only")
+    parser.add_argument("--x-observe", action="store_true", help="read and store at most a few new X mentions; never writes to X")
     parser.add_argument("--reset-circuit", action="store_true")
     parser.add_argument("--confirm-reset-circuit", action="store_true")
     parser.add_argument("--seed", type=int, default=1)
@@ -34,8 +35,21 @@ def main() -> None:
         except ZoneInfoNotFoundError: tz="invalid format"
         try: parsed=datetime.fromisoformat(epoch); epoch_status="configured" if parsed.tzinfo else "invalid format"
         except ValueError: epoch_status="missing" if not epoch else "invalid format"
-        report={"mode":"CREDENTIALS","x_credentials":present("API_KEY","API_SECRET","ACCESS_TOKEN","ACCESS_TOKEN_SECRET"),"supabase_url":"configured" if url.startswith("https://") else ("missing" if not url else "invalid format"),"supabase_publishable_key":present("SUPABASE_PUBLISHABLE_KEY"),"supabase_secret_key":present("SUPABASE_SECRET_KEY"),"timezone":tz,"autonomous_epoch":epoch_status}
+        report={"mode":"CREDENTIALS","x_credentials":present("API_KEY","API_SECRET","ACCESS_TOKEN","ACCESS_TOKEN_SECRET"),"x_bearer_token":present("X_BEARER_TOKEN"),"x_read":"enabled" if os.getenv("X_READ_ENABLED","").lower()=="true" else "disabled","x_write":"enabled" if os.getenv("X_WRITE_ENABLED","").lower()=="true" else "disabled","supabase_url":"configured" if url.startswith("https://") else ("missing" if not url else "invalid format"),"supabase_publishable_key":present("SUPABASE_PUBLISHABLE_KEY"),"supabase_secret_key":present("SUPABASE_SECRET_KEY"),"timezone":tz,"autonomous_epoch":epoch_status}
         print(json.dumps(report,ensure_ascii=False,indent=2)); return
+    if args.x_observe:
+        import json
+        from pandausagies_v2.production_storage import SupabaseHttpClient
+        from pandausagies_v2.x_ingestion import XReadConfig,run_x_read
+        from pandausagies_v2.x_read import XReadClient
+        truth=lambda name: os.getenv(name,"").strip().lower()=="true"
+        cfg=XReadConfig(os.getenv("APP_ENV",""),os.getenv("X_HANDLE",""),truth("X_READ_ENABLED"),truth("X_WRITE_ENABLED"),truth("ALLOW_EXTERNAL_SEND"),truth("AUTONOMOUS_ENABLED"),truth("KILL_SWITCH"),int(os.getenv("X_BACKFILL_LIMIT","10")),int(os.getenv("X_MAX_PAGES","2")))
+        try:
+            result=run_x_read(XReadClient(os.getenv("X_BEARER_TOKEN","")),SupabaseHttpClient(os.getenv("SUPABASE_URL",""),os.getenv("SUPABASE_SECRET_KEY","")),cfg,force_resolve=truth("X_FORCE_RESOLVE"))
+        except Exception:
+            result={"status":"safe_stopped","reason":"configuration_or_storage","observations":[]}
+        safe={k:result.get(k) for k in ("status","fetched","stored","duplicates","ignored","self_excluded","classifications","api_calls","observations","reason") if k in result}
+        print(json.dumps(safe,ensure_ascii=False,indent=2)); return
     if args.reset_circuit:
         if not args.confirm_reset_circuit: parser.error("--confirm-reset-circuit is required")
         if os.getenv("STORAGE_PROVIDER")=="supabase":
@@ -50,7 +64,7 @@ def main() -> None:
         try:
             if os.getenv("STORAGE_PROVIDER")=="supabase": store=SupabaseStorage(SupabaseHttpClient(os.getenv("SUPABASE_URL",""),os.getenv("SUPABASE_SECRET_KEY","")))
             else: store=SQLiteStorage(Path(args.storage))
-            report=store.health(); report.update({"mode":"HEALTH","kill_switch":"ON" if config.kill_switch else "OFF","x_provider":os.getenv("X_PROVIDER","fake").upper(),"external_send":"ENABLED" if config.allow_external_send else "DISABLED","autonomous":"ENABLED" if config.autonomous_enabled else "DISABLED"})
+            report=store.health(); report.update({"mode":"HEALTH","kill_switch":"ON" if config.kill_switch else "OFF","x_provider":os.getenv("X_PROVIDER","fake").upper(),"x_write":"ENABLED" if os.getenv("X_WRITE_ENABLED","").lower()=="true" else "DISABLED","external_send":"ENABLED" if config.allow_external_send else "DISABLED","autonomous":"ENABLED" if config.autonomous_enabled else "DISABLED"})
         except Exception:
             report={"mode":"HEALTH","storage":"ERROR","memory":"UNKNOWN","kill_switch":"ON" if config.kill_switch else "OFF","external_send":"DISABLED","autonomous":"DISABLED","consecutive_errors":"UNKNOWN"}
         print(json.dumps(report,ensure_ascii=False,indent=2)); return

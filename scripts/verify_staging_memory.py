@@ -71,7 +71,7 @@ def clean_staging(client: SupabaseHttpClient) -> None:
     marker = client.select("staging_metadata", "select=environment&singleton=eq.true&limit=1")
     if marker != [{"environment": "staging"}]:
         raise SystemExit("remote staging marker missing")
-    for table in ("public_state_snapshots","usage_history","delivery_ledger","post_decisions","weeks","errors","life_events","job_runs","job_leases","settings"):
+    for table in ("reply_candidates","mentions","conversations","contacts","x_account_identities","x_read_cursors","public_state_snapshots","usage_history","delivery_ledger","post_decisions","weeks","errors","life_events","job_runs","job_leases","settings"):
         client.delete(table, "environment=eq.staging")
     client.patch("memory_state", "singleton=eq.true&environment=eq.staging", {"version":0,"value":{}})
 
@@ -142,7 +142,7 @@ def main() -> int:
     client.insert("public_state_snapshots", {"payload":{"private":"draft"},"published":False})
     public_status, public_rows = anon_read(url,publishable,"public_state_snapshots")
     assert public_status==200 and len(public_rows)==1 and public_rows[0]["payload"]==public_payload
-    for private_table in ("job_runs","post_decisions","errors","settings","job_leases","delivery_ledger","memory_state","life_events","contacts","conversations","reply_candidates","metrics","posts"):
+    for private_table in ("job_runs","post_decisions","errors","settings","job_leases","delivery_ledger","memory_state","life_events","contacts","conversations","reply_candidates","x_account_identities","metrics","posts"):
         # 404 is also a safe result for intentionally unprovisioned future tables.
         assert anon_status(url,publishable,private_table) in (401,403,404)
 
