@@ -73,3 +73,14 @@ python3 autonomous.py --credentials
 ```
 
 設計は`docs/production_adapter_design.md`、緊急停止手順は`docs/panic_stop.md`、未適用RLS案は`db/rls.sql`を参照してください。
+
+## Image Autogen Phase A
+
+画像つき日常投稿に向けたstaging限定pipelineがあります。Phase Aは`FakeImageProvider`のみを許可し、生成候補をprivate Storageとprivate metadataへ保存して停止します。X write、実画像生成API、Render production変更は行いません。失敗時は同じcaptionの`text_only`へフォールバックします。
+
+```bash
+python3 -m unittest tests.test_image_autogen -v
+IMAGE_PROVIDER=fake IMAGE_AUTOGEN_ENABLED=true python3 scripts/run_image_phase_a.py
+```
+
+設定・DB migration・安全境界は`docs/image_autogen.md`と`db/image_autogen_staging.sql`を参照してください。

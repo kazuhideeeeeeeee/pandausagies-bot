@@ -44,11 +44,18 @@ LINES = {motif: LINES[motif] + EXTRA_LINES[motif] for motif in MOTIFS}
 class Decision:
  at: str; action: str; category: str|None; motif: str|None; event_id: str|None; event_action: str
  song_id: str|None; media_id: str|None; include_url: bool; text: str; reason: str; week_id: str|None=None
+ post_type: str="text_only"
  def to_dict(self)->dict[str,Any]: return asdict(self)
 
 class AutonomousDirector:
- def __init__(self,songs:list[dict],media_provider:ExistingMediaProvider,rng:random.Random|None=None):
-  self.songs,self.media_provider,self.rng=songs,media_provider,rng or random.Random(); self.expression=LocalExpressionProvider(); self.validator=ExpressionValidator()
+ def __init__(self,songs:list[dict],media_provider:ExistingMediaProvider,rng:random.Random|None=None,image_autogen_enabled:bool=False,image_post_ratio:float=0.0,image_skip_ratio:float=0.0):
+  if not 0.0<=image_post_ratio<=1.0 or not 0.0<=image_skip_ratio<=1.0 or image_post_ratio+image_skip_ratio>1.0: raise ValueError("image post-type ratios are invalid")
+  self.songs,self.media_provider,self.rng=songs,media_provider,rng or random.Random(); self.expression=LocalExpressionProvider(); self.validator=ExpressionValidator(); self.image_autogen_enabled=image_autogen_enabled; self.image_post_ratio=image_post_ratio; self.image_skip_ratio=image_skip_ratio
+ def _post_type(self,category:str)->str:
+  if not self.image_autogen_enabled or category not in ("ordinary","offbeat"): return "text_only"
+  roll=self.rng.random()
+  if roll<self.image_skip_ratio: return "skip"
+  return "image_single" if roll<self.image_skip_ratio+self.image_post_ratio else "text_only"
  def _pick_motif(self,memory:Memory,event:dict|None)->str:
   recent=[p.get("motif") for p in memory.posts[-3:]]
   if event and event["motif"] in MOTIFS and self.rng.random()<.65: return event["motif"]
@@ -65,16 +72,18 @@ class AutonomousDirector:
   scored=[(self.validator.score(t),t,c) for t,c in candidates]; best=min(x[0] for x in scored); _,text,category=self.rng.choice([x for x in scored if x[0]==best]); return self.expression.polish(text),category
  def decide(self,now:datetime,memory:Memory,weekly_due:bool=False)->Decision:
   day_posts=[p for p in memory.posts if p["at"][:10]==now.date().isoformat()]
-  if len(day_posts)>=memory.settings["normal_daily_limit"]: return Decision(now.isoformat(),"skip",None,None,None,"none",None,None,False,"","daily hard limit")
+  if len(day_posts)>=memory.settings["normal_daily_limit"]: return Decision(now.isoformat(),"skip",None,None,None,"none",None,None,False,"","daily hard limit",post_type="skip")
   memory.events,event,event_action=evolve_events(memory.events,now.date(),self.rng)
-  if not weekly_due and self.rng.random()>(.50 if not day_posts else .12): return Decision(now.isoformat(),"skip",None,None,event and event["id"],event_action,None,None,False,"","quiet day chosen")
+  if not weekly_due and self.rng.random()>(.50 if not day_posts else .12): return Decision(now.isoformat(),"skip",None,None,event and event["id"],event_action,None,None,False,"","quiet day chosen",post_type="skip")
   motif=self._pick_motif(memory,event); text,category=self._text(motif,memory)
   song=choose_song(self.songs,[p["song_id"] for p in memory.posts if p.get("song_id")],self.rng) if weekly_due else None; media=self.media_provider.choose([p["media_id"] for p in memory.posts if p.get("media_id")],self.rng) if weekly_due else None
   promo_count=sum(p.get("category")=="promo" for p in memory.posts); promo_room=not memory.posts or promo_count/len(memory.posts)<.08
   include_url=bool(weekly_due and song and promo_room and self.rng.random()<.55); category="promo" if include_url else category; validation=self.validator.validate(text)
-  if not validation.valid or any(w in text for w in BANNED): return Decision(now.isoformat(),"skip",None,motif,event and event["id"],event_action,None,None,False,"","voice validation rejected")
+  if not validation.valid or any(w in text for w in BANNED): return Decision(now.isoformat(),"skip",None,motif,event and event["id"],event_action,None,None,False,"","voice validation rejected",post_type="skip")
   week_id=f"week-{len(memory.weeks)+1:02d}" if weekly_due else None
-  return Decision(now.isoformat(),"post",category,motif,event and event["id"],event_action,song and song["id"],media and media["id"],include_url,text,"weekly autonomous selection" if weekly_due else "daily autonomous trace",week_id)
+  post_type=self._post_type(category)
+  if post_type=="skip": return Decision(now.isoformat(),"skip",None,motif,event and event["id"],event_action,None,None,False,"","post-type policy skip",post_type="skip")
+  return Decision(now.isoformat(),"post",category,motif,event and event["id"],event_action,song and song["id"],media and media["id"],include_url,text,"weekly autonomous selection" if weekly_due else "daily autonomous trace",week_id,post_type)
 
 def apply_decision(memory:Memory,decision:Decision,mutate_week:bool=True)->None:
  data=decision.to_dict(); memory.decisions.append(data)

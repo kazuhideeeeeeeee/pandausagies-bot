@@ -15,11 +15,14 @@ from .memory import JsonMemoryStore, Memory
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def build_director(seed: int | None = None) -> AutonomousDirector:
+def build_director(seed: int | None = None, image_autogen_enabled: bool = False, image_post_ratio: float = 0.0, image_skip_ratio: float = 0.0) -> AutonomousDirector:
     return AutonomousDirector(
         read_json(ROOT / "content" / "songs.json"),
         ExistingMediaProvider(ROOT, read_json(ROOT / "content" / "media.json")),
         random.Random(seed),
+        image_autogen_enabled=image_autogen_enabled,
+        image_post_ratio=image_post_ratio,
+        image_skip_ratio=image_skip_ratio,
     )
 
 
