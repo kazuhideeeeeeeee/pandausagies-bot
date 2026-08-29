@@ -14,7 +14,7 @@ from pandausagies_v2.media import ExistingMediaProvider
 from pandausagies_v2.memory import JsonMemoryStore, Memory
 from pandausagies_v2.simulation import simulate
 from pandausagies_v2.songs import choose_song
-from pandausagies_v2.expression import ExpressionValidator
+from pandausagies_v2.expression import ExpressionValidator, ending_structure, is_double_past
 
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -89,6 +89,20 @@ class AutonomousCoreTests(unittest.TestCase):
         self.assertFalse(validator.validate("花が少し開いた\n音はしない").valid)
         self.assertFalse(validator.validate("今日は少し明るい\n特に理由はない").valid)
         self.assertTrue(validator.validate("お弁当のすき間\nパンで埋めた").valid)
+
+    def test_sentence_ending_classifier_distinguishes_past_present_and_fragments(self):
+        self.assertEqual(ending_structure("メガネのねじを締めた\n小さいドライバーを使った"), ("past", "past"))
+        self.assertEqual(ending_structure("マイクを机に出した\n一曲だけ"), ("past", "fragment"))
+        self.assertEqual(ending_structure("電車一本見送る\n次ので行く"), ("present", "present"))
+        self.assertTrue(is_double_past("食卓に布を敷いた\n角を一度直した"))
+
+    def test_recent_twenty_sentence_endings_do_not_reveal_one_template(self):
+        for seed in (1001, 2002, 3003, 4004, 5005):
+            _, report = simulate(90, seed, START)
+            self.assertLessEqual(report["double_past_rate_last20"], 0.45, (seed, report))
+            self.assertGreater(report["double_past_rate_last20"], 0.0, (seed, report))
+            self.assertLessEqual(report["max_ending_structure_streak_last20"], 2, (seed, report))
+            self.assertLessEqual(report["max_same_ending_structure_in_recent5_last20"], 2, (seed, report))
 
     def test_simulation_rejects_unbounded_ranges(self):
         with self.assertRaises(ValueError):

@@ -5,6 +5,33 @@ from typing import Protocol
 
 CONCRETE_WORDS = ("鍋", "食卓", "パン", "ギター", "メガネ", "王冠", "花", "電車", "部屋", "弁当", "机", "椅子", "窓", "皿", "卵", "ごはん", "マイク", "駅", "棚", "本", "電球", "脚立", "おかず", "梅干し", "箸", "売店", "スプーン", "歌詞")
 POETIC_TURNS = ("が元気", "が待っていた", "理由も", "部屋が広く", "音はしない", "特に理由はない", "景色は同じ", "夜が近く")
+PRESENT_ENDINGS = (
+    "食べる", "入れる", "置く", "持つ", "歩く", "読む", "閉める", "開ける",
+    "動かす", "替える", "使う", "探す", "乗る", "降りる", "拭く", "洗う",
+    "切る", "焼く", "弾く", "聴く", "録る", "直す", "戻す", "運ぶ",
+    "干す", "つける", "見送る", "行く", "立つ", "包む", "移す", "締める",
+)
+STATE_ENDINGS = ("いる", "ある", "ない", "そのまま", "あと", "明日", "今日", "そこ")
+
+
+def line_ending_style(line: str) -> str:
+    """Classify only the visible ending shape; this is not a grammar parser."""
+    value = line.strip().rstrip("。！？!?…")
+    if value.endswith("た"):
+        return "past"
+    if value.endswith(STATE_ENDINGS):
+        return "state"
+    if value.endswith(PRESENT_ENDINGS):
+        return "present"
+    return "fragment"
+
+
+def ending_structure(text: str) -> tuple[str, ...]:
+    return tuple(line_ending_style(line) for line in text.splitlines() if line.strip())
+
+
+def is_double_past(text: str) -> bool:
+    return ending_structure(text) == ("past", "past")
 
 @dataclass(frozen=True)
 class Validation:

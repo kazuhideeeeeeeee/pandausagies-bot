@@ -9,7 +9,7 @@ from typing import Any
 from .autonomous import build_director
 from .director import apply_decision, next_week_due
 from .memory import Memory
-from .expression import CONCRETE_WORDS
+from .expression import CONCRETE_WORDS, ending_structure, is_double_past
 
 
 def similar_rate(texts: list[str], threshold: float = 0.72) -> float:
@@ -25,6 +25,20 @@ def similar_rate(texts: list[str], threshold: float = 0.72) -> float:
         if any(SequenceMatcher(None, structure(text), structure(previous)).ratio() >= threshold for previous in texts[:index]):
             similar += 1
     return round(similar / len(texts), 4)
+
+
+def max_structure_streak(structures: list[tuple[str, ...]]) -> int:
+    longest = current = 0
+    previous = None
+    for structure in structures:
+        current = current + 1 if structure == previous else 1
+        longest = max(longest, current)
+        previous = structure
+    return longest
+
+
+def max_structure_count_in_window(structures: list[tuple[str, ...]], window: int = 5) -> int:
+    return max((max(Counter(part).values()) for index in range(len(structures)) if (part := structures[max(0, index-window+1):index+1])), default=0)
 
 
 def simulate(days: int, seed: int, start: datetime) -> tuple[Memory, dict[str, Any]]:
@@ -47,6 +61,8 @@ def simulate(days: int, seed: int, start: datetime) -> tuple[Memory, dict[str, A
     songs = Counter(post["song_id"] for post in posts if post.get("song_id"))
     media = Counter(post["media_id"] for post in posts if post.get("media_id"))
     texts = [post["text"] for post in posts]
+    last_twenty_texts = texts[-20:]
+    last_twenty_structures = [ending_structure(text) for text in last_twenty_texts]
     event_starts = sum(decision.get("event_action") in ("start", "one_off") for decision in memory.decisions)
     event_continues = sum(decision.get("event_action") == "continue" for decision in memory.decisions)
     report = {
@@ -66,6 +82,9 @@ def simulate(days: int, seed: int, start: datetime) -> tuple[Memory, dict[str, A
         "promo_rate": round(sum(bool(post.get("include_url")) for post in posts) / len(posts), 4) if posts else 0,
         "duplicate_rate": round((len(texts) - len(set(texts))) / len(texts), 4) if texts else 0,
         "similar_rate": similar_rate(texts),
+        "double_past_rate_last20": round(sum(is_double_past(text) for text in last_twenty_texts) / len(last_twenty_texts), 4) if last_twenty_texts else 0,
+        "max_ending_structure_streak_last20": max_structure_streak(last_twenty_structures),
+        "max_same_ending_structure_in_recent5_last20": max_structure_count_in_window(last_twenty_structures),
         "weeks": len(memory.weeks), "week_ids": [week["id"] for week in memory.weeks],
         "representative_posts": [{key: post.get(key) for key in ("at", "category", "motif", "text", "song_id", "media_id", "week_id")} for post in posts[:25]],
     }

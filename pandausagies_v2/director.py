@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Any
 from .events import evolve_events
-from .expression import ExpressionValidator, LocalExpressionProvider
+from .expression import ExpressionValidator, LocalExpressionProvider, ending_structure, is_double_past
 from .media import ExistingMediaProvider
 from .memory import Memory
 from .songs import choose_song
@@ -27,18 +27,30 @@ LINES = {
  "flowers": (("花を窓のそばへ\n今日はそこ","ordinary"),("花の水を替えた\n茎も少し切った","ordinary"),("短い花を前に置いた\n長い花は後ろ","ordinary"),("花瓶がなかった\n大きいコップを使った","offbeat"),("黄色い花を一本買った\nパンとは別に持った","ordinary"),("花を三本に分けた\n花瓶は二つ使った","offbeat")),
 }
 EXTRA_LINES = {
- "pot": (("鍋を洗って棚に戻した\nふたも同じ場所に置いた","ordinary"),("鍋でじゃがいもを煮た\n四つ入れた","ordinary")),
- "table": (("食卓に布を敷いた\n角を一度直した","ordinary"),("食卓で郵便を読んだ\n封筒は重ねて置いた","ordinary")),
- "bread": (("固いパンをスープに入れた\nスプーンで食べた","ordinary"),("パン屋で食パンを買った\nかばんの上に入れた","ordinary")),
- "glasses": (("メガネを食卓に置いた\n鍋から少し離した","ordinary"),("メガネを外して顔を洗った\nタオルの横に置いた","ordinary")),
- "train": (("電車を乗り換えた\n同じホームを端まで歩いた","ordinary"),("空いた電車で立っていた\nかばんは手に持った","ordinary")),
- "room": (("古い部屋で洗濯物を干した\nシャツは二枚","ordinary"),("カーテンを閉めた\n机の電気をつけた","ordinary")),
- "lunch": (("小さいお弁当にした\nパンも別に持った","ordinary"),("お昼を遅く食べた\n卵焼きから食べた","ordinary")),
- "guitar": (("録音を一度聴いた\n音量を少し下げた","ordinary"),("ギターをケースに入れた\n玄関に置いた","ordinary")),
- "crown": (("王冠を一度かぶった\n箱へ戻した","ordinary"),("王冠を撮る前にメガネを拭いた\n布は机に置いた","ordinary")),
- "flowers": (("花びらを一枚拾った\n食卓の端に置いた","ordinary"),("花を撮る前に鍋を移した\n鍋は台に置いた","ordinary")),
+ "pot": (("鍋を洗って棚へ\nふたも同じ場所","ordinary"),("鍋でじゃがいもを煮る\n今日は四つ","ordinary")),
+ "table": (("食卓に布\n角だけもう一回","ordinary"),("食卓で郵便を読む\n封筒は重ねて置く","ordinary")),
+ "bread": (("固いパンをスープへ\nスプーンで食べる","ordinary"),("パン屋で食パン\nかばんのいちばん上","ordinary")),
+ "glasses": (("メガネは食卓\n鍋から少し離す","ordinary"),("メガネを外して顔を洗う\nタオルの横","ordinary")),
+ "train": (("電車を乗り換える\n同じホームを端まで","ordinary"),("空いた電車で立つ\nかばんは手","ordinary")),
+ "room": (("古い部屋で洗濯物\nシャツは二枚","ordinary"),("カーテンを閉める\n机の電気だけ","ordinary")),
+ "lunch": (("小さいお弁当\nパンは別","ordinary"),("お昼は遅め\n卵焼きから","ordinary")),
+ "guitar": (("録音を一度聴く\n音量は少し下げる","ordinary"),("ギターをケースへ\n玄関に置く","ordinary")),
+ "crown": (("王冠は一度だけ\nあとは箱","ordinary"),("王冠を撮る前にメガネ\n布は机","ordinary")),
+ "flowers": (("花びら一枚\n食卓の端","ordinary"),("花を撮る前に鍋を移す\n鍋は台","ordinary")),
 }
-LINES = {motif: LINES[motif] + EXTRA_LINES[motif] for motif in MOTIFS}
+DIVERSE_LINES = {
+ "pot": (("鍋にうどん\n少し多い","ordinary"),("鍋のふたはあと\n先にパンを切る","offbeat")),
+ "table": (("食卓を拭く\nパンくずが三つ","ordinary"),("食卓の真ん中は空ける\nごはんは端","offbeat")),
+ "bread": (("パンを半分\n大きい方はお弁当","ordinary"),("パンの袋\n洗濯ばさみで閉じる","offbeat")),
+ "glasses": (("メガネを拭く\n右だけ二回","ordinary"),("メガネを探す\n掛けたまま","offbeat")),
+ "train": (("各駅停車に乗る\n三つ先で降りる","ordinary"),("電車一本見送る\n次ので行く","offbeat")),
+ "room": (("古い部屋の窓を開ける\n十分だけ","ordinary"),("棚の上だけ\n下の段は明日","offbeat")),
+ "lunch": (("卵焼きが少し斜め\nそのまま閉める","ordinary"),("お弁当のすき間\nパンをひとつ","offbeat")),
+ "guitar": (("マイクを机に出した\n一曲だけ","ordinary"),("ギターは壁から外す\nチューニングだけ","offbeat")),
+ "crown": (("王冠を箱から出す\nほこりだけ拭く","ordinary"),("王冠は食卓\n鍋より奥","offbeat")),
+ "flowers": (("花の水を替える\n茎も少し","ordinary"),("黄色い花を一本\nパンとは別","offbeat")),
+}
+LINES = {motif: LINES[motif] + EXTRA_LINES[motif] + DIVERSE_LINES[motif] for motif in MOTIFS}
 
 @dataclass(frozen=True)
 class Decision:
@@ -68,7 +80,18 @@ class AutonomousDirector:
   preferred="offbeat" if (not nonpromo or offbeat/len(nonpromo)<.18) and self.rng.random()<.30 else "ordinary"
   preferred_pool=[x for x in LINES[motif] if x[1]==preferred]
   preferred_unused=[x for x in preferred_pool if x[0] not in used]; any_unused=[x for x in LINES[motif] if x[0] not in used]
-  candidates=preferred_unused or any_unused or preferred_pool
+  recent_structures=[ending_structure(p.get("text", "")) for p in memory.posts[-5:]]
+  tiers=(preferred_unused,any_unused,preferred_pool,list(LINES[motif]))
+  candidates=[]
+  for tier in tiers:
+   candidates=[item for item in tier if recent_structures.count(ending_structure(item[0]))<2]
+   if candidates: break
+  if not candidates: candidates=preferred_unused or any_unused or preferred_pool
+  recent_twenty=[p.get("text", "") for p in memory.posts[-20:]]
+  double_past_rate=sum(is_double_past(text) for text in recent_twenty)/len(recent_twenty) if recent_twenty else 0.0
+  if double_past_rate>=.40:
+   non_double_past=[item for item in candidates if not is_double_past(item[0])]
+   if non_double_past: candidates=non_double_past
   scored=[(self.validator.score(t),t,c) for t,c in candidates]; best=min(x[0] for x in scored); _,text,category=self.rng.choice([x for x in scored if x[0]==best]); return self.expression.polish(text),category
  def decide(self,now:datetime,memory:Memory,weekly_due:bool=False)->Decision:
   day_posts=[p for p in memory.posts if p["at"][:10]==now.date().isoformat()]
